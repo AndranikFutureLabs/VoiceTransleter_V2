@@ -1,0 +1,34 @@
+appId: com.voice-transleter.app
+productName: VoiceTransleter V2
+directories:
+  buildResources: resources
+  output: dist
+
+files:
+  - out/**/*
+  - "!node_modules/**/.cache/**"
+  - "!node_modules/onnxruntime-node/bin/napi-v3/darwin/**"
+  - "!node_modules/onnxruntime-node/bin/napi-v3/linux/**"
+  - "!node_modules/onnxruntime-node/bin/napi-v3/arm/**"
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: resources/icon.png
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+
+extraResources:
+  - from: resources/
+    to: ./
+    filter:
+      - "**/*"
+  - from: scripts/
+    to: scripts/
+    filter:
+      - "**/*"

@@ -1,0 +1,16 @@
+node_modules/
+dist/
+out/
+temp/
+venv/
+__pycache__/
+*.pyc
+.env
+*.log
+.DS_Store
+resources/ffmpeg.exe
+resources/ffprobe.exe
+voices/
+*.wav
+logo.jpg
+resources/*.exe
