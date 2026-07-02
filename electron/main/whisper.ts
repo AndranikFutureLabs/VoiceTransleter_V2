@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from 'child_process'
 import { join } from 'path'
 import { app } from 'electron'
 import { createInterface, type Interface } from 'readline'
+import { getPythonCommand } from './platform'
 
 let pyProcess: ChildProcess | null = null
 let rl: Interface | null = null
@@ -77,7 +78,7 @@ export async function loadWhisperModel(
     const script = getScriptPath()
     onLog?.('🔄 Запуск faster-whisper (Python sidecar)...')
 
-    pyProcess = spawn('python', [script], {
+    pyProcess = spawn(getPythonCommand(), [script], {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' },
     })

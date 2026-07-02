@@ -3,6 +3,7 @@ import { join } from 'path'
 import { app } from 'electron'
 import { createInterface, type Interface } from 'readline'
 import { getVoiceById, getVoiceProfiles } from './voice_profiles'
+import { getPythonCommand, PATH_SEPARATOR } from './platform'
 
 let pyProcess: ChildProcess | null = null
 let rl: Interface | null = null
@@ -47,11 +48,10 @@ export async function loadTtsModel(onProgress?: (pct: number) => void, onLog?: (
     const script = getScriptPath()
     onLog?.('🔄 Запуск XTTS v2 (Python, загрузка ~2.5 ГБ, первый раз может быть долго)...')
 
-    const ffmpegPath = join('C:\\kinescope-desktop\\bin')
     const oldPath = process.env.PATH || ''
-    const newPath = `${ffmpegPath};${oldPath}`
+    const newPath = `${oldPath}`
 
-    pyProcess = spawn('python', [script], {
+    pyProcess = spawn(getPythonCommand(), [script], {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env, PATH: newPath, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' },
     })

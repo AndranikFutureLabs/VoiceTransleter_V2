@@ -23,6 +23,29 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
 
+mac:
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+  icon: resources/icon.png
+  category: public.app-category.video
+  hardenedRuntime: false
+  gatekeeperAssess: false
+
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+  icon: resources/icon.png
+  category: AudioVideo
+  maintainer: AndranikFutureLabs
+
 extraResources:
   - from: resources/
     to: ./
@@ -30,5 +53,9 @@ extraResources:
       - "**/*"
   - from: scripts/
     to: scripts/
+    filter:
+      - "**/*"
+  - from: logo.jpg
+    to: logo.jpg
     filter:
       - "**/*"

@@ -1,10 +1,12 @@
 import { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, dialog, shell } from 'electron'
 import { join } from 'path'
+import { existsSync } from 'fs'
 import { runDubbingPipeline, ensureModels } from './pipeline'
 import { getFfmpegPathSafe, downloadFfmpeg } from './ffmpeg'
 import { isWhisperReady, isWhisperDownloading, isWhisperCached, clearWhisperCache } from './whisper'
 import { isTtsReady, isTtsDownloading, isTtsCached, stopTts, clearTtsCache } from './tts'
 import { getVoiceProfiles } from './voice_profiles'
+import { openFolder } from './platform'
 
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
@@ -117,8 +119,7 @@ function setupIpc() {
 
   ipcMain.handle('app:openFolder', async (_, folderPath: string) => {
     try {
-      const { exec } = require('child_process')
-      exec(`explorer "${folderPath}"`)
+      openFolder(folderPath)
     } catch (e: any) {
       const result = await shell.openPath(folderPath)
       if (result) send('pipeline:log', `⚠️ Не удалось открыть папку: ${result}`)
@@ -183,15 +184,21 @@ app.whenReady().then(() => {
   createWindow()
   setupIpc()
 
-  const iconPath = join(__dirname, '../../logo.jpg')
-  tray = new Tray(nativeImage.createFromPath(iconPath).resize({ width: 16, height: 16 }))
-  tray.setToolTip('VoiceTransleter V2')
-  tray.setContextMenu(Menu.buildFromTemplate([
-    { label: 'Открыть', click: () => mainWindow?.show() },
-    { type: 'separator' },
-    { label: 'Выход', click: () => app.quit() }
-  ]))
-  tray.on('click', () => mainWindow?.show())
+  // Tray icon: try dev path, then production resources path
+  const devIcon = join(__dirname, '../../logo.jpg')
+  const prodIcon = join(process.resourcesPath || '', 'logo.jpg')
+  const iconPath = existsSync(devIcon) ? devIcon : prodIcon
+  const iconImage = nativeImage.createFromPath(iconPath)
+  if (!iconImage.isEmpty()) {
+    tray = new Tray(iconImage.resize({ width: 16, height: 16 }))
+    tray.setToolTip('VoiceTransleter V2')
+    tray.setContextMenu(Menu.buildFromTemplate([
+      { label: 'Открыть', click: () => mainWindow?.show() },
+      { type: 'separator' },
+      { label: 'Выход', click: () => app.quit() }
+    ]))
+    tray.on('click', () => mainWindow?.show())
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

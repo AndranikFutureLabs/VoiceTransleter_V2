@@ -12,5 +12,5 @@ resources/ffmpeg.exe
 resources/ffprobe.exe
 voices/
 *.wav
-logo.jpg
 resources/*.exe
+# logo.jpg is needed for tray icon in production builds
