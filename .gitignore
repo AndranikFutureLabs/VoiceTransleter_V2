@@ -14,3 +14,4 @@ voices/
 *.wav
 resources/*.exe
 # logo.jpg is needed for tray icon in production builds
+VoiceTransleter_V2.md

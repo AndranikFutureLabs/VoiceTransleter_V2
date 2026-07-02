@@ -69,7 +69,7 @@ defineExpose({ show: () => { open.value = true } })
           <div class="border-t border-gray-700 my-3" />
 
           <div class="text-xs space-y-1 text-gray-400">
-            <p>Версия 2.0.0</p>
+            <p>Версия 2.1.0</p>
             <p>Whisper · XTTS v2 · Google Translate</p>
           </div>
 

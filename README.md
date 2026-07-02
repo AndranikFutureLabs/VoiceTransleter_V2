@@ -2,7 +2,7 @@
 
 Дубляж видео с переводом речи на русский язык с синтезом голоса (любой язык → RU).
 
-**Версия:** 2.0.0
+**Версия:** 2.1.0
 
 **Разработчик:** Андраник Алавердян (AndranikFutureLabs)  
 **Поддержка:** [@AndranikFutureLabs](https://t.me/AndranikFutureLabs)  
@@ -32,6 +32,15 @@ VoiceTransleter V2 — десктопное приложение для авто
 - **Трей** — свёртка в системный лоток
 
 ---
+
+## Что нового в версии 2.1.0
+
+- **Кроссплатформенная поддержка** — сборки для macOS (Intel + Apple Silicon) и Linux (AppImage + deb)
+- **GitHub Actions CI** — автоматическая сборка под все платформы при пуше в репозиторий
+- **Кроссплатформенный Python** — автоматическое определение `python3` / `python` / `py` в зависимости от ОС
+- **Кроссплатформенное открытие папок** — `explorer` (Windows), `open` (macOS), `xdg-open` (Linux)
+- **Исправлен tray icon** — корректный путь к иконке в production-сборках на всех платформах
+- **Убран хардкод** — удалён прописанный путь `C:\kinescope-desktop\bin` из кода
 
 ## Что нового в версии 2.0.0
 
@@ -66,7 +75,7 @@ VoiceTransleter V2 — десктопное приложение для авто
 
 #### Вариант 1: Готовый установщик (рекомендуется)
 
-1. Скачайте последний релиз: `VoiceTransleter V2 Setup 2.0.0.exe`
+1. Скачайте последний релиз: `VoiceTransleter V2 Setup 2.1.0.exe`
 2. Запустите установщик
 3. Следуйте инструкциям мастера установки
 4. После установки запустите программу через ярлык на рабочем столе или меню Пуск
@@ -107,7 +116,15 @@ npm run dist
 
 ### macOS / Linux
 
-> **Внимание:** VoiceTransleter V2 разработан и протестирован для Windows. Сборка под macOS и Linux возможна, но требует доработок (пути, Python-окружение, FFmpeg).
+Начиная с версии 2.1.0, VoiceTransleter V2 поддерживает сборку под macOS и Linux через GitHub Actions.
+
+#### Вариант 1: Готовые сборки
+
+1. Скачайте артефакты сборки со страницы [GitHub Actions](https://github.com/AndranikFutureLabs/VoiceTransleter_V2/actions)
+2. **macOS:** распакуйте `.dmg` файл, перетащите приложение в Applications
+3. **Linux:** сделайте AppImage исполняемым (`chmod +x VoiceTransleter*.AppImage`) и запустите
+
+#### Вариант 2: Сборка из исходников
 
 ```bash
 # Требования
@@ -123,13 +140,17 @@ npm install
 pip3 install faster-whisper TTS
 
 # FFmpeg — должен быть в PATH
-# ffmpeg и ffprobe
+# macOS:  brew install ffmpeg
+# Linux:  sudo apt install ffmpeg
 
 # Запуск
 npm run dev
 
-# Сборка под вашу платформу
-npm run dist
+# Сборка под macOS
+npm run dist:mac
+
+# Сборка под Linux
+npm run dist:linux
 ```
 
 ---
@@ -236,11 +257,13 @@ VoiceTransleter_V2/
 
 ## Системные требования
 
-- **ОС:** Windows 10/11 (x64)
+- **ОС:** Windows 10/11 (x64), macOS 11+ (Intel/Apple Silicon), Linux (Ubuntu 20.04+ / x64)
 - **ОЗУ:** 8+ ГБ (рекомендуется 16 ГБ)
 - **Диск:** 10+ ГБ свободного места (модели ~4 ГБ)
 - **Интернет:** требуется для первой загрузки моделей
 - **CPU:** любой x64 с поддержкой AVX (рекомендуется 4+ ядер)
+- **Python:** 3.10–3.11 (для Whisper и TTS sidecar)
+- **FFmpeg:** должен быть установлен или доступен в PATH
 
 ---
 
