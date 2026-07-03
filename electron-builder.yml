@@ -22,6 +22,8 @@ nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
+  publisherName: "AndranikFutureLabs"
+  uninstallDisplayName: "VoiceTransleter V2"
 
 mac:
   target:
