@@ -258,17 +258,50 @@ async function downloadAndInstallPython311(
     throw new Error('Failed to install faster-whisper')
   }
 
-  // Install TTS (Coqui)
-  onLog?.('  📦 Установка TTS (Coqui)...')
+  // Pre-install TTS build dependencies (numpy, cython, torch needed for TTS build)
+  onLog?.('  📦 Установка зависимостей для TTS...')
   try {
-    execSync(`"${pyExe}" -m pip install --no-warn-script-location TTS`, {
+    execSync(`"${pyExe}" -m pip install --no-warn-script-location numpy cython`, {
       stdio: 'pipe',
-      timeout: 600000,
+      timeout: 300000,
       env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
     })
+  } catch {}
+
+  // Install TTS (Coqui) — this is a large package, may take 10+ minutes
+  onLog?.('  📦 Установка TTS (Coqui, ~5-10 мин)...')
+  try {
+    const ttsResult = execSync(
+      `"${pyExe}" -m pip install --no-warn-script-location TTS`,
+      {
+        stdio: 'pipe',
+        timeout: 1800000, // 30 minutes
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8', PIP_DEFAULT_TIMEOUT: '300' },
+        encoding: 'utf-8',
+      }
+    )
     onLog?.('  ✅ TTS установлен')
-  } catch {
-    throw new Error('Failed to install TTS')
+  } catch (err: any) {
+    // Capture stderr for debugging
+    const stderr = err.stderr?.toString() || ''
+    const stdout = err.stdout?.toString() || ''
+    onLog?.(`  ⚠️ stderr: ${stderr.slice(-500)}`)
+    onLog?.(`  ⚠️ stdout: ${stdout.slice(-500)}`)
+
+    // Try alternative: install with --no-deps then deps separately
+    onLog?.('  🔄 Повторная установка TTS (--no-build-isolation)...')
+    try {
+      execSync(`"${pyExe}" -m pip install --no-warn-script-location --no-build-isolation TTS`, {
+        stdio: 'pipe',
+        timeout: 1800000,
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8', PIP_DEFAULT_TIMEOUT: '300' },
+      })
+      onLog?.('  ✅ TTS установлен (повтор)')
+    } catch (err2: any) {
+      const stderr2 = err2.stderr?.toString() || ''
+      onLog?.(`  ❌ Ошибка TTS: ${stderr2.slice(-500)}`)
+      throw new Error(`Failed to install TTS: ${stderr2.slice(-300)}`)
+    }
   }
 
   onProgress?.(0.2)

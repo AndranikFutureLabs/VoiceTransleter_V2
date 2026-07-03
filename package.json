@@ -1,6 +1,6 @@
 {
   "name": "voice-transleter",
-  "version": "2.1.6",
+  "version": "2.1.7",
   "description": "VoiceTransleter V2 — дубляж видео с переводом речи и синтезом голоса",
   "main": "./out/main/index.js",
   "author": {
