@@ -67,6 +67,8 @@ function setupIpc() {
       ttsDownloading: isTtsDownloading(),
       ffmpeg: getFfmpegPathSafe(),
       python: pyDeps.python,
+      pythonVersion: pyDeps.pythonVersion,
+      pythonCompatible: pyDeps.pythonCompatible,
       pythonDeps: pyDeps.fasterWhisper && pyDeps.tts
     }
   })

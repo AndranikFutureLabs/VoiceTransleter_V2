@@ -27,6 +27,8 @@ const status = reactive({
   ttsCached: false,
   ttsDownloading: false,
   python: false,
+  pythonVersion: '',
+  pythonCompatible: false,
   pythonDeps: false
 })
 const allReady = ref(false)
@@ -81,6 +83,8 @@ onMounted(async () => {
   status.whisperCached = models.whisperCached
   status.ttsCached = models.ttsCached
   status.python = models.python ?? true
+  status.pythonVersion = models.pythonVersion ?? ''
+  status.pythonCompatible = models.pythonCompatible ?? true
   status.pythonDeps = models.pythonDeps ?? true
   allReady.value = models.whisper && models.tts && models.ffmpeg !== null
 })
@@ -174,9 +178,21 @@ async function startPipeline() {
       <h2 class="text-lg font-bold mb-1">Дубляж видео</h2>
       <p class="text-sm text-gray-400 mb-4">Перевод речи на русский язык с синтезом голоса</p>
 
+      <!-- Python version warning -->
+      <div
+        v-if="status.python && !status.pythonCompatible"
+        class="mb-4 p-3 bg-red-900/30 border border-red-700/50 rounded-xl text-sm text-red-300"
+      >
+        ⚠️ <strong>Python {{ status.pythonVersion }} не поддерживается!</strong><br>
+        Coqui TTS требует Python 3.9–3.11. Установите <a href="https://www.python.org/downloads/release/python-3119/" class="underline text-red-200" @click.prevent="window.electronAPI.openLink('https://www.python.org/downloads/release/python-3119/')">Python 3.11</a> и попробуйте снова.
+      </div>
+
       <!-- Status badges -->
       <div class="flex flex-wrap gap-4 mb-4 p-3 bg-gray-800/50 rounded-xl border border-gray-700/50">
-        <StatusBadge label="Python" :ready="status.python" />
+        <StatusBadge
+          :label="status.python ? `Python ${status.pythonVersion}` : 'Python'"
+          :ready="status.python && status.pythonCompatible"
+        />
         <StatusBadge label="Py-зависимости" :ready="status.pythonDeps" />
         <StatusBadge label="FFmpeg" :ready="status.ffmpeg" />
         <StatusBadge

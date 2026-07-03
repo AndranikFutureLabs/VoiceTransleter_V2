@@ -80,10 +80,66 @@ export function isPythonAvailable(): boolean {
 }
 
 /**
+ * Get the Python version as a string (e.g. "3.11.9").
+ */
+function getPythonVersion(): string | null {
+  const py = getPythonCommand()
+  try {
+    const output = execSync(`${py} --version 2>&1`, {
+      stdio: 'pipe',
+      timeout: 5000,
+      encoding: 'utf-8',
+    })
+    // Parse "Python 3.11.9" format
+    const match = output.match(/Python\s+(\d+)\.(\d+)\.(\d+)/)
+    return match ? `${match[1]}.${match[2]}.${match[3]}` : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Compare semantic versions (e.g. "3.11.9" >= "3.9").
+ * Returns: 1 if a > b, 0 if a == b, -1 if a < b
+ */
+function compareVersions(a: string, b: string): number {
+  const pa = a.split('.').map(Number)
+  const pb = b.split('.').map(Number)
+  const maxLen = Math.max(pa.length, pb.length)
+  for (let i = 0; i < maxLen; i++) {
+    const va = pa[i] || 0
+    const vb = pb[i] || 0
+    if (va > vb) return 1
+    if (va < vb) return -1
+  }
+  return 0
+}
+
+/**
+ * Check if Python version is compatible (3.9–3.11).
+ * Coqui TTS requires Python >=3.9,<3.12.
+ */
+function isPythonVersionCompatible(): { ok: boolean; version: string; reason?: string } {
+  const version = getPythonVersion()
+  if (!version) {
+    return { ok: false, version: 'unknown', reason: 'Не удалось определить версию Python' }
+  }
+  if (compareVersions(version, '3.9') < 0) {
+    return { ok: false, version, reason: `Python ${version} слишком старый. Требуется Python 3.9–3.11. Скачайте с python.org` }
+  }
+  if (compareVersions(version, '3.12') >= 0) {
+    return { ok: false, version, reason: `Python ${version} не поддерживается. Coqui TTS требует Python 3.9–3.11. Установите Python 3.11 с python.org` }
+  }
+  return { ok: true, version }
+}
+
+/**
  * Check if all required Python packages are installed.
  */
 export interface PythonDepsStatus {
   python: boolean
+  pythonVersion: string
+  pythonCompatible: boolean
   fasterWhisper: boolean
   tts: boolean
 }
@@ -91,12 +147,15 @@ export interface PythonDepsStatus {
 export function checkPythonDeps(): PythonDepsStatus {
   const pythonOk = isPythonAvailable()
   if (!pythonOk) {
-    return { python: false, fasterWhisper: false, tts: false }
+    return { python: false, pythonVersion: '', pythonCompatible: false, fasterWhisper: false, tts: false }
   }
+  const versionCheck = isPythonVersionCompatible()
   return {
     python: true,
-    fasterWhisper: isPythonPackageInstalled('faster_whisper'),
-    tts: isPythonPackageInstalled('TTS'),
+    pythonVersion: versionCheck.version,
+    pythonCompatible: versionCheck.ok,
+    fasterWhisper: versionCheck.ok && isPythonPackageInstalled('faster_whisper'),
+    tts: versionCheck.ok && isPythonPackageInstalled('TTS'),
   }
 }
 
@@ -112,7 +171,15 @@ export async function ensurePythonDeps(
 
   if (!status.python) {
     throw new Error(
-      'Python не найден в системе. Установите Python 3.10+ с python.org и попробуйте снова.'
+      'Python не найден в системе. Установите Python 3.10–3.11 с python.org и попробуйте снова.'
+    )
+  }
+
+  if (!status.pythonCompatible) {
+    const versionCheck = isPythonVersionCompatible()
+    throw new Error(
+      versionCheck.reason ||
+        `Python ${status.pythonVersion} не поддерживается. Установите Python 3.10 или 3.11 с python.org.`
     )
   }
 
@@ -121,7 +188,7 @@ export async function ensurePythonDeps(
   if (!status.tts) missing.push('TTS')
 
   if (missing.length === 0) {
-    onLog?.('✅ Python-зависимости установлены')
+    onLog?.(`✅ Python-зависимости установлены (Python ${status.pythonVersion})`)
     return
   }
 
@@ -137,6 +204,6 @@ export async function ensurePythonDeps(
     onProgress?.(0.05 + (installed / total) * 0.15)
   }
 
-  onLog?.('✅ Все Python-зависимости установлены')
+  onLog?.(`✅ Все Python-зависимости установлены (Python ${status.pythonVersion})`)
   onProgress?.(0.2)
 }

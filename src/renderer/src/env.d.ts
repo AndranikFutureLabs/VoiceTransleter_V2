@@ -21,6 +21,8 @@ interface ModelsStatus {
   ttsDownloading: boolean
   ffmpeg: string | null
   python: boolean
+  pythonVersion: string
+  pythonCompatible: boolean
   pythonDeps: boolean
 }
 
