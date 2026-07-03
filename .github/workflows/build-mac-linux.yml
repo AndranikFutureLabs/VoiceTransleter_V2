@@ -11,6 +11,8 @@ on:
 jobs:
   build:
     name: Build on ${{ matrix.os }}
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
