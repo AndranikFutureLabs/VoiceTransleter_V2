@@ -116,6 +116,115 @@ function compareVersions(a: string, b: string): number {
 }
 
 /**
+ * Download and install Python 3.11 silently on Windows.
+ * Uses the official python.org installer.
+ */
+async function downloadAndInstallPython311(
+  onLog?: (msg: string) => void,
+  onProgress?: (pct: number) => void
+): Promise<void> {
+  const { existsSync, mkdirSync, rmSync, createWriteStream, statSync } = require('fs')
+  const { join } = require('path')
+  const { app } = require('electron')
+  const https = require('https')
+
+  const pyDir = join(app.getPath('userData'), 'python311')
+  const installerPath = join(app.getPath('userData'), 'python-3.11.9-amd64.exe')
+
+  // If already installed, skip
+  const pyExe = join(pyDir, 'python.exe')
+  if (existsSync(pyExe)) {
+    onLog?.('  ✅ Python 3.11 уже установлен в папке приложения')
+    return
+  }
+
+  // Download URL
+  const url = 'https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe'
+
+  onLog?.('  📥 Скачивание Python 3.11.9 (~25 МБ)...')
+  onProgress?.(0.02)
+
+  // Download with redirect support
+  await new Promise<void>((resolve, reject) => {
+    const download = (url: string, redirects: number = 0) => {
+      if (redirects > 5) { reject(new Error('Too many redirects')); return }
+      https.get(url, (res: any) => {
+        if (res.statusCode === 301 || res.statusCode === 302) {
+          download(res.headers.location, redirects + 1)
+          return
+        }
+        if (res.statusCode !== 200) {
+          reject(new Error(`HTTP ${res.statusCode}`)); return
+        }
+        const total = parseInt(res.headers['content-length'] || '0')
+        let received = 0
+        const file = createWriteStream(installerPath)
+        res.on('data', (chunk: Buffer) => {
+          received += chunk.length
+          if (total > 0) {
+            const pct = 0.02 + (received / total) * 0.08
+            onProgress?.(pct)
+          }
+        })
+        res.pipe(file)
+        file.on('finish', () => { file.close(); resolve() })
+        file.on('error', reject)
+      }).on('error', reject)
+    }
+    download(url)
+  })
+
+  onLog?.('  ✅ Скачивание завершено')
+  onProgress?.(0.12)
+
+  // Install silently to app data folder
+  onLog?.('  📦 Установка Python 3.11.9...')
+  const { execSync } = require('child_process')
+  try {
+    execSync(`"${installerPath}" /quiet InstallAllUsers=0 TargetDir="${pyDir}" PrependPath=0 Include_pip=1 Include_launcher=0`, {
+      stdio: 'pipe',
+      timeout: 300000, // 5 minutes
+    })
+  } catch (err: any) {
+    onLog?.(`  ❌ Ошибка установки Python: ${err.message.slice(0, 200)}`)
+    throw new Error('Failed to install Python 3.11')
+  }
+
+  // Verify installation
+  if (!existsSync(pyExe)) {
+    throw new Error('Python 3.11 installation failed: python.exe not found')
+  }
+
+  // Clean up installer
+  try { rmSync(installerPath, { force: true }) } catch {}
+
+  // Install packages into this Python
+  onLog?.('  📦 Установка faster-whisper и TTS в новый Python...')
+  onProgress?.(0.15)
+
+  try {
+    execSync(`"${pyExe}" -m pip install --upgrade pip`, { stdio: 'pipe', timeout: 120000 })
+  } catch {}
+
+  try {
+    execSync(`"${pyExe}" -m pip install faster-whisper`, { stdio: 'pipe', timeout: 600000 })
+    onLog?.('  ✅ faster-whisper установлен')
+  } catch {
+    throw new Error('Failed to install faster-whisper into embedded Python')
+  }
+
+  try {
+    execSync(`"${pyExe}" -m pip install TTS`, { stdio: 'pipe', timeout: 600000 })
+    onLog?.('  ✅ TTS установлен')
+  } catch {
+    throw new Error('Failed to install TTS into embedded Python')
+  }
+
+  onProgress?.(0.2)
+  onLog?.('  ✅ Python 3.11.9 + все зависимости установлены!')
+}
+
+/**
  * Check if Python version is compatible (3.9–3.11).
  * Coqui TTS requires Python >=3.9,<3.12.
  */
@@ -176,11 +285,36 @@ export async function ensurePythonDeps(
   }
 
   if (!status.pythonCompatible) {
-    const versionCheck = isPythonVersionCompatible()
-    throw new Error(
-      versionCheck.reason ||
-        `Python ${status.pythonVersion} не поддерживается. Установите Python 3.10 или 3.11 с python.org.`
-    )
+    // Try to auto-install Python 3.11 (Windows only)
+    if (process.platform === 'win32') {
+      onLog?.(`⚠️ Python ${status.pythonVersion} несовместим. Автоустановка Python 3.11...`)
+      try {
+        await downloadAndInstallPython311(onLog, onProgress)
+        // Update environment to use embedded Python
+        const { join } = require('path')
+        const { app } = require('electron')
+        const pyExe = join(app.getPath('userData'), 'python311', 'python.exe')
+        process.env.VOICE_TRANSLATOR_PYTHON = pyExe
+        onLog?.('✅ Python 3.11 установлен и готов к работе')
+        // Re-check with new Python
+        const newStatus = checkPythonDeps()
+        if (!newStatus.python) {
+          throw new Error('Установленный Python 3.11 не найден')
+        }
+        return
+      } catch (err: any) {
+        throw new Error(
+          `Не удалось установить Python 3.11 автоматически: ${err.message}\n` +
+          `Установите Python 3.11 вручную с python.org`
+        )
+      }
+    } else {
+      const versionCheck = isPythonVersionCompatible()
+      throw new Error(
+        versionCheck.reason ||
+          `Python ${status.pythonVersion} не поддерживается. Установите Python 3.10 или 3.11 с python.org.`
+      )
+    }
   }
 
   const missing: string[] = []

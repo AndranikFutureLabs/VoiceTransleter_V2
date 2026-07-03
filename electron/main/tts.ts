@@ -54,6 +54,7 @@ export async function loadTtsModel(onProgress?: (pct: number) => void, onLog?: (
     pyProcess = spawn(getPythonCommand(), [script], {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env, PATH: newPath, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' },
+      shell: true,
     })
 
     let stderrBuf = ''

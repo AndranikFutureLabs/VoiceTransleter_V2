@@ -81,6 +81,7 @@ export async function loadWhisperModel(
     pyProcess = spawn(getPythonCommand(), [script], {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' },
+      shell: true,
     })
 
     let stderrBuf = ''
