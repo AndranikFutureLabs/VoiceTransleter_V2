@@ -1,5 +1,6 @@
 appId: com.voice-transleter.app
 productName: VoiceTransleter V2
+copyright: Copyright © 2026 AndranikFutureLabs
 directories:
   buildResources: resources
   output: dist
@@ -17,6 +18,7 @@ win:
       arch:
         - x64
   icon: resources/icon.png
+  legalTrademarks: AndranikFutureLabs
 
 nsis:
   oneClick: false

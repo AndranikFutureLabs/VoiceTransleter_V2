@@ -9,15 +9,6 @@
     "url": "https://andranik-future-labs.ru"
   },
   "license": "MIT",
-  "build": {
-    "win": {
-      "legalTrademarks": "AndranikFutureLabs",
-      "companyName": "AndranikFutureLabs",
-      "fileDescription": "VoiceTransleter V2 - Video Dubbing Tool",
-      "productName": "VoiceTransleter V2",
-      "copyright": "Copyright © 2026 AndranikFutureLabs"
-    }
-  },
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
