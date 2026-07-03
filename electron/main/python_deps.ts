@@ -279,6 +279,24 @@ export async function ensurePythonDeps(
   const status = checkPythonDeps()
 
   if (!status.python) {
+    // Python not found at all — try auto-install on Windows
+    if (process.platform === 'win32') {
+      onLog?.('📦 Python не найден. Автоустановка Python 3.11...')
+      try {
+        await downloadAndInstallPython311(onLog, onProgress)
+        const { join } = require('path')
+        const { app } = require('electron')
+        const pyExe = join(app.getPath('userData'), 'python311', 'python.exe')
+        process.env.VOICE_TRANSLATOR_PYTHON = pyExe
+        onLog?.('✅ Python 3.11 установлен и готов к работе')
+        return
+      } catch (err: any) {
+        throw new Error(
+          `Не удалось установить Python 3.11 автоматически: ${err.message}\n` +
+          `Установите Python 3.11 вручную с python.org`
+        )
+      }
+    }
     throw new Error(
       'Python не найден в системе. Установите Python 3.10–3.11 с python.org и попробуйте снова.'
     )
