@@ -116,35 +116,41 @@ function compareVersions(a: string, b: string): number {
 }
 
 /**
- * Download and install Python 3.11 silently on Windows.
- * Uses the official python.org installer.
+ * Download and install Python 3.11 using embedded (portable) distribution.
+ * No admin rights needed — just unzip and configure pip.
  */
 async function downloadAndInstallPython311(
   onLog?: (msg: string) => void,
   onProgress?: (pct: number) => void
 ): Promise<void> {
-  const { existsSync, mkdirSync, rmSync, createWriteStream, statSync } = require('fs')
+  const { existsSync, mkdirSync, rmSync, createWriteStream, writeFileSync, readFileSync } = require('fs')
   const { join } = require('path')
   const { app } = require('electron')
   const https = require('https')
+  const { execSync } = require('child_process')
 
   const pyDir = join(app.getPath('userData'), 'python311')
-  const installerPath = join(app.getPath('userData'), 'python-3.11.9-amd64.exe')
+  const pyExe = join(pyDir, 'python.exe')
 
   // If already installed, skip
-  const pyExe = join(pyDir, 'python.exe')
   if (existsSync(pyExe)) {
     onLog?.('  ✅ Python 3.11 уже установлен в папке приложения')
     return
   }
 
-  // Download URL
-  const url = 'https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe'
+  // Clean up partial install
+  if (existsSync(pyDir)) {
+    try { rmSync(pyDir, { recursive: true, force: true }) } catch {}
+  }
+  mkdirSync(pyDir, { recursive: true })
 
-  onLog?.('  📥 Скачивание Python 3.11.9 (~25 МБ)...')
+  // Download embedded Python zip (~10 MB)
+  const zipUrl = 'https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip'
+  const zipPath = join(app.getPath('userData'), 'python-3.11.9-embed.zip')
+
+  onLog?.('  📥 Скачивание Python 3.11.9 (embedded, ~10 МБ)...')
   onProgress?.(0.02)
 
-  // Download with redirect support
   await new Promise<void>((resolve, reject) => {
     const download = (url: string, redirects: number = 0) => {
       if (redirects > 5) { reject(new Error('Too many redirects')); return }
@@ -158,12 +164,11 @@ async function downloadAndInstallPython311(
         }
         const total = parseInt(res.headers['content-length'] || '0')
         let received = 0
-        const file = createWriteStream(installerPath)
+        const file = createWriteStream(zipPath)
         res.on('data', (chunk: Buffer) => {
           received += chunk.length
           if (total > 0) {
-            const pct = 0.02 + (received / total) * 0.08
-            onProgress?.(pct)
+            onProgress?.(0.02 + (received / total) * 0.08)
           }
         })
         res.pipe(file)
@@ -171,53 +176,99 @@ async function downloadAndInstallPython311(
         file.on('error', reject)
       }).on('error', reject)
     }
-    download(url)
+    download(zipUrl)
   })
 
   onLog?.('  ✅ Скачивание завершено')
   onProgress?.(0.12)
 
-  // Install silently to app data folder
-  onLog?.('  📦 Установка Python 3.11.9...')
-  const { execSync } = require('child_process')
+  // Unzip embedded Python
+  onLog?.('  📦 Распаковка Python 3.11.9...')
   try {
-    execSync(`"${installerPath}" /quiet InstallAllUsers=0 TargetDir="${pyDir}" PrependPath=0 Include_pip=1 Include_launcher=0`, {
+    // Use PowerShell to unzip (available on all Windows 10+)
+    execSync(
+      `powershell -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${pyDir}' -Force"`,
+      { stdio: 'pipe', timeout: 60000 }
+    )
+  } catch (err: any) {
+    onLog?.(`  ❌ Ошибка распаковки: ${err.message.slice(0, 200)}`)
+    throw new Error('Failed to unzip Python')
+  }
+
+  // Verify python.exe
+  if (!existsSync(pyExe)) {
+    // List what's in the dir for debugging
+    try {
+      const { readdirSync } = require('fs')
+      const files = readdirSync(pyDir)
+      onLog?.(`  ⚠️ python.exe не найден. Содержимое папки: ${files.slice(0, 10).join(', ')}`)
+    } catch {}
+    throw new Error('Python.exe not found after unzip')
+  }
+
+  // Clean up zip
+  try { rmSync(zipPath, { force: true }) } catch {}
+
+  // Enable site-packages (needed for pip)
+  const pthFile = join(pyDir, 'python311._pth')
+  if (existsSync(pthFile)) {
+    let content = readFileSync(pthFile, 'utf-8')
+    // Uncomment "import site" line
+    content = content.replace('#import site', 'import site')
+    writeFileSync(pthFile, content)
+  }
+
+  // Download and install pip via get-pip.py
+  onLog?.('  📦 Установка pip...')
+  const getPipPath = join(pyDir, 'get-pip.py')
+  await new Promise<void>((resolve, reject) => {
+    https.get('https://bootstrap.pypa.io/get-pip.py', (res: any) => {
+      if (res.statusCode !== 200) { reject(new Error(`HTTP ${res.statusCode}`)); return }
+      const file = createWriteStream(getPipPath)
+      res.pipe(file)
+      file.on('finish', () => { file.close(); resolve() })
+      file.on('error', reject)
+    }).on('error', reject)
+  })
+
+  try {
+    execSync(`"${pyExe}" "${getPipPath}" --no-warn-script-location`, {
       stdio: 'pipe',
-      timeout: 300000, // 5 minutes
+      timeout: 120000,
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
     })
   } catch (err: any) {
-    onLog?.(`  ❌ Ошибка установки Python: ${err.message.slice(0, 200)}`)
-    throw new Error('Failed to install Python 3.11')
+    onLog?.(`  ❌ Ошибка установки pip: ${err.message.slice(0, 200)}`)
+    throw new Error('Failed to install pip')
   }
 
-  // Verify installation
-  if (!existsSync(pyExe)) {
-    throw new Error('Python 3.11 installation failed: python.exe not found')
-  }
+  try { rmSync(getPipPath, { force: true }) } catch {}
 
-  // Clean up installer
-  try { rmSync(installerPath, { force: true }) } catch {}
-
-  // Install packages into this Python
-  onLog?.('  📦 Установка faster-whisper и TTS в новый Python...')
+  // Install faster-whisper
+  onLog?.('  📦 Установка faster-whisper...')
   onProgress?.(0.15)
-
   try {
-    execSync(`"${pyExe}" -m pip install --upgrade pip`, { stdio: 'pipe', timeout: 120000 })
-  } catch {}
-
-  try {
-    execSync(`"${pyExe}" -m pip install faster-whisper`, { stdio: 'pipe', timeout: 600000 })
+    execSync(`"${pyExe}" -m pip install --no-warn-script-location faster-whisper`, {
+      stdio: 'pipe',
+      timeout: 600000,
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+    })
     onLog?.('  ✅ faster-whisper установлен')
   } catch {
-    throw new Error('Failed to install faster-whisper into embedded Python')
+    throw new Error('Failed to install faster-whisper')
   }
 
+  // Install TTS (Coqui)
+  onLog?.('  📦 Установка TTS (Coqui)...')
   try {
-    execSync(`"${pyExe}" -m pip install TTS`, { stdio: 'pipe', timeout: 600000 })
+    execSync(`"${pyExe}" -m pip install --no-warn-script-location TTS`, {
+      stdio: 'pipe',
+      timeout: 600000,
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+    })
     onLog?.('  ✅ TTS установлен')
   } catch {
-    throw new Error('Failed to install TTS into embedded Python')
+    throw new Error('Failed to install TTS')
   }
 
   onProgress?.(0.2)
