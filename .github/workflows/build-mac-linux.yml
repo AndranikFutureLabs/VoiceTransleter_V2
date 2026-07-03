@@ -1,4 +1,4 @@
-name: Build macOS & Linux
+name: Build All Platforms
 
 on:
   push:
@@ -24,6 +24,9 @@ jobs:
           - os: ubuntu-22.04
             platform: linux
             artifact_name: VoiceTransleter-V2-Linux
+          - os: windows-latest
+            platform: win
+            artifact_name: VoiceTransleter-V2-Windows
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -66,14 +69,18 @@ jobs:
         run: npx electron-builder --mac
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Skip code signing for open-source / unsigned builds
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-          # Use the python3 path for the build environment
           PYTHON_PATH: python3
 
       - name: Build Linux
         if: matrix.platform == 'linux'
         run: npx electron-builder --linux
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build Windows
+        if: matrix.platform == 'win'
+        run: npx electron-builder --win
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -86,6 +93,51 @@ jobs:
             dist/*.zip
             dist/*.AppImage
             dist/*.deb
+            dist/*.exe
             dist/latest*.yml
           if-no-files-found: warn
           retention-days: 30
+
+  release:
+    name: Publish Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          find artifacts -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.exe' -o -name 'latest*.yml' \) -exec cp {} release/ \;
+          ls -lh release/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: VoiceTransleter V2 ${{ github.ref_name }}
+          body: |
+            ## VoiceTransleter V2 ${{ github.ref_name }}
+
+            ### Downloads
+            - **Windows**: `.exe` installer
+            - **macOS Intel**: `.dmg`
+            - **macOS Apple Silicon**: `.dmg`
+            - **Linux**: `.AppImage` / `.deb`
+
+            ### Note
+            Requires **FFmpeg** and **Python 3.10+** with `faster-whisper` and `TTS` packages installed.
+          files: release/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
