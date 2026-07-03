@@ -5,6 +5,7 @@ import { loadWhisperModel, runWhisper, isWhisperReady } from './whisper'
 import { loadTtsModel, synthesizeSpeech, isTtsReady } from './tts'
 import { translateText } from './translator'
 import { getFfmpegPathSafe, runFfmpeg, getVideoDuration } from './ffmpeg'
+import { ensurePythonDeps, checkPythonDeps } from './python_deps'
 
 export interface Segment {
   start: number
@@ -137,6 +138,9 @@ export async function ensureModels(
   onProgress: (pct: number) => void
 ): Promise<void> {
   onLog('🔍 Проверка зависимостей...')
+
+  // Check and install Python dependencies first
+  await ensurePythonDeps(onLog, onProgress)
 
   if (!getFfmpegPathSafe()) {
     throw new Error('FFmpeg не найден. Нажмите "Загрузить FFmpeg" перед запуском.')

@@ -20,6 +20,8 @@ interface ModelsStatus {
   ttsCached: boolean
   ttsDownloading: boolean
   ffmpeg: string | null
+  python: boolean
+  pythonDeps: boolean
 }
 
 interface ElectronAPI {

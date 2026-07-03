@@ -11,6 +11,8 @@ const api = {
     ttsCached: boolean
     ttsDownloading: boolean
     ffmpeg: string | null
+    python: boolean
+    pythonDeps: boolean
   }>,
 
   loadModels: () => ipcRenderer.invoke('models:load') as Promise<{ success: boolean; error?: string }>,

@@ -7,6 +7,7 @@ import { isWhisperReady, isWhisperDownloading, isWhisperCached, clearWhisperCach
 import { isTtsReady, isTtsDownloading, isTtsCached, stopTts, clearTtsCache } from './tts'
 import { getVoiceProfiles } from './voice_profiles'
 import { openFolder } from './platform'
+import { checkPythonDeps } from './python_deps'
 
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
@@ -56,6 +57,7 @@ function setupIpc() {
   })
 
   ipcMain.handle('models:check', () => {
+    const pyDeps = checkPythonDeps()
     return {
       whisper: isWhisperReady(),
       whisperCached: isWhisperCached(),
@@ -63,7 +65,9 @@ function setupIpc() {
       tts: isTtsReady(),
       ttsCached: isTtsCached(),
       ttsDownloading: isTtsDownloading(),
-      ffmpeg: getFfmpegPathSafe()
+      ffmpeg: getFfmpegPathSafe(),
+      python: pyDeps.python,
+      pythonDeps: pyDeps.fasterWhisper && pyDeps.tts
     }
   })
 

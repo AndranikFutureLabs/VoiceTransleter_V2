@@ -25,7 +25,9 @@ const status = reactive({
   whisperDownloading: false,
   tts: false,
   ttsCached: false,
-  ttsDownloading: false
+  ttsDownloading: false,
+  python: false,
+  pythonDeps: false
 })
 const allReady = ref(false)
 
@@ -78,6 +80,8 @@ onMounted(async () => {
   status.ffmpeg = models.ffmpeg !== null
   status.whisperCached = models.whisperCached
   status.ttsCached = models.ttsCached
+  status.python = models.python ?? true
+  status.pythonDeps = models.pythonDeps ?? true
   allReady.value = models.whisper && models.tts && models.ffmpeg !== null
 })
 
@@ -172,6 +176,8 @@ async function startPipeline() {
 
       <!-- Status badges -->
       <div class="flex flex-wrap gap-4 mb-4 p-3 bg-gray-800/50 rounded-xl border border-gray-700/50">
+        <StatusBadge label="Python" :ready="status.python" />
+        <StatusBadge label="Py-зависимости" :ready="status.pythonDeps" />
         <StatusBadge label="FFmpeg" :ready="status.ffmpeg" />
         <StatusBadge
           label="Whisper"
