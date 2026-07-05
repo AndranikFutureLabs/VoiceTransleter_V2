@@ -140,11 +140,10 @@ async function downloadAndInstallPython311(
     return
   }
 
-  // Clean up partial install
+  // Clean up partial install — do NOT recreate dir, installer will create it
   if (existsSync(pyDir)) {
     try { rmSync(pyDir, { recursive: true, force: true }) } catch {}
   }
-  mkdirSync(pyDir, { recursive: true })
 
   // Download full Python installer (~27 MB) — includes headers + libs for C extension compilation
   const installerUrl = 'https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe'
@@ -184,50 +183,89 @@ async function downloadAndInstallPython311(
   onLog?.('  ✅ Скачивание завершено')
   onProgress?.(0.12)
 
-  // Run installer silently — per-user (no admin), includes dev files (headers + libs)
-  onLog?.('  📦 Установка Python 3.11.9 (с заголовками и библиотеками C)...')
+  // Run installer silently — per-user (no admin)
+  // Full installer always includes Python.h + python311.lib (no Include_dev param needed)
+  onLog?.('  📦 Установка Python 3.11.9...')
+  let installedPyExe: string | null = null
+
+  // Attempt 1: install to TargetDir in app data
   try {
     execSync(
-      `"${installerPath}" /quiet InstallAllUsers=0 PrependPath=0 ` +
-      `Include_pip=1 Include_dev=1 Include_test=0 Include_doc=0 ` +
-      `Include_launcher=1 TargetDir="${pyDir}"`,
-      { stdio: 'pipe', timeout: 300000 } // 5 minutes
+      `"${installerPath}" /quiet InstallAllUsers=0 PrependPath=0 Include_pip=1 Include_test=0 InstallLauncherAllUsers=0 TargetDir="${pyDir}"`,
+      { stdio: 'pipe', timeout: 300000, encoding: 'utf-8' }
     )
+    if (existsSync(pyExe)) {
+      installedPyExe = pyExe
+      onLog?.('  ✅ Python установлен в папку приложения')
+    }
   } catch (err: any) {
-    onLog?.(`  ❌ Ошибка установки: ${err.message.slice(0, 200)}`)
-    throw new Error('Failed to install Python 3.11.9')
+    const stderr = err.stderr?.toString() || ''
+    const exitCode = err.status
+    onLog?.(`  ⚠️ TargetDir install failed (exit=${exitCode}): ${stderr.slice(0, 150)}`)
   }
 
-  // Verify python.exe exists
-  if (!existsSync(pyExe)) {
-    // TargetDir might not have worked — check default per-user location
+  // Attempt 2: install to default per-user location (no TargetDir)
+  if (!installedPyExe) {
+    onLog?.('  📦 Повторная установка (стандартная директория)...')
+    try {
+      execSync(
+        `"${installerPath}" /quiet InstallAllUsers=0 PrependPath=0 Include_pip=1 Include_test=0 InstallLauncherAllUsers=0`,
+        { stdio: 'pipe', timeout: 300000, encoding: 'utf-8' }
+      )
+    } catch (err: any) {
+      const stderr = err.stderr?.toString() || ''
+      const exitCode = err.status
+      onLog?.(`  ⚠️ Default install failed (exit=${exitCode}): ${stderr.slice(0, 150)}`)
+    }
+
+    // Find python.exe in default per-user location
     const defaultPath = join(process.env.LOCALAPPDATA || '', 'Programs', 'Python', 'Python311', 'python.exe')
     if (existsSync(defaultPath)) {
-      // Python installed to default location — use that path
-      onLog?.('  ℹ️ Python установлен в стандартную директорию')
+      installedPyExe = defaultPath
+      onLog?.('  ✅ Python установлен в стандартную директорию')
       process.env.VOICE_TRANSLATOR_PYTHON = defaultPath
-      // Skip remaining steps that use pyExe — use defaultPath instead
-      const actualPyExe = defaultPath
-      await installDependencies(actualPyExe, pyDir, onLog, onProgress)
-      return
     }
-    throw new Error('Python.exe not found after installation')
   }
 
-  // Verify Python.h exists (needed for C extension compilation like TTS)
-  const pythonH = join(pyDir, 'include', 'Python.h')
-  if (!existsSync(pythonH)) {
-    // Also check capitalized Include (some installer versions)
-    const pythonHAlt = join(pyDir, 'Include', 'Python.h')
-    if (!existsSync(pythonHAlt)) {
-      onLog?.('  ⚠️ Python.h не найден — C-расширения могут не компилироваться')
+  // Attempt 3: check if Python 3.11 already exists on system (installer may have skipped)
+  if (!installedPyExe) {
+    for (const cmd of ['py -3.11', 'python3.11', 'python']) {
+      try {
+        const out = execSync(`${cmd} --version 2>&1`, { stdio: 'pipe', timeout: 5000, encoding: 'utf-8' })
+        if (out.includes('Python 3.11')) {
+          // Get actual path
+          const pyPath = execSync(`${cmd} -c "import sys; print(sys.executable)"`, {
+            stdio: 'pipe', timeout: 5000, encoding: 'utf-8'
+          }).trim()
+          if (pyPath && existsSync(pyPath)) {
+            installedPyExe = pyPath
+            onLog?.(`  ✅ Найден существующий Python 3.11: ${pyPath}`)
+            process.env.VOICE_TRANSLATOR_PYTHON = pyPath
+            break
+          }
+        }
+      } catch {}
     }
+  }
+
+  if (!installedPyExe) {
+    // Clean up installer
+    try { rmSync(installerPath, { force: true }) } catch {}
+    throw new Error('Python.exe not found after installation. Установите Python 3.11 вручную с python.org')
+  }
+
+  // Verify Python.h exists (needed for TTS C extension compilation)
+  const pyDirActual = require('path').dirname(installedPyExe)
+  const pythonH = join(pyDirActual, 'include', 'Python.h')
+  const pythonHAlt = join(pyDirActual, 'Include', 'Python.h')
+  if (!existsSync(pythonH) && !existsSync(pythonHAlt)) {
+    onLog?.('  ⚠️ Python.h не найден — C-расширения могут не компилироваться')
   }
 
   // Clean up installer
   try { rmSync(installerPath, { force: true }) } catch {}
 
-  await installDependencies(pyExe, pyDir, onLog, onProgress)
+  await installDependencies(installedPyExe, pyDir, onLog, onProgress)
 }
 
 /**
