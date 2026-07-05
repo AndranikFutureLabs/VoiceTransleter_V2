@@ -116,16 +116,19 @@ function compareVersions(a: string, b: string): number {
 }
 
 /**
- * Download and install Python 3.11 using the full installer (not embedded).
- * The full installer includes C headers (Python.h) and libs (python311.lib)
- * which are REQUIRED for compiling C extensions like Coqui TTS.
- * No admin rights needed — per-user install (InstallAllUsers=0).
+ * Download and install Python 3.11 from NuGet package.
+ * NuGet package is a zip archive that includes EVERYTHING needed:
+ * - python.exe (full, not embedded)
+ * - Python.h + headers (for C extension compilation like TTS)
+ * - python311.lib (linker library)
+ * - pip (pre-installed)
+ * No installer, no admin rights, no 1603 errors.
  */
 async function downloadAndInstallPython311(
   onLog?: (msg: string) => void,
   onProgress?: (pct: number) => void
 ): Promise<void> {
-  const { existsSync, mkdirSync, rmSync, createWriteStream, writeFileSync, readFileSync } = require('fs')
+  const { existsSync, mkdirSync, rmSync, createWriteStream } = require('fs')
   const { join } = require('path')
   const { app } = require('electron')
   const https = require('https')
@@ -140,23 +143,24 @@ async function downloadAndInstallPython311(
     return
   }
 
-  // Clean up partial install — do NOT recreate dir, installer will create it
+  // Clean up partial install
   if (existsSync(pyDir)) {
     try { rmSync(pyDir, { recursive: true, force: true }) } catch {}
   }
+  mkdirSync(pyDir, { recursive: true })
 
-  // Download full Python installer (~27 MB) — includes headers + libs for C extension compilation
-  const installerUrl = 'https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe'
-  const installerPath = join(app.getPath('userData'), 'python-3.11.9-amd64.exe')
+  // Download NuGet Python package (~25 MB) — includes headers + libs + pip
+  const zipUrl = 'https://www.nuget.org/api/v2/package/python/3.11.9'
+  const zipPath = join(app.getPath('userData'), 'python-3.11.9-nuget.zip')
 
-  onLog?.('  📥 Скачивание Python 3.11.9 (полный установщик, ~27 МБ)...')
+  onLog?.('  📥 Скачивание Python 3.11.9 (NuGet, ~25 МБ)...')
   onProgress?.(0.02)
 
   await new Promise<void>((resolve, reject) => {
     const download = (url: string, redirects: number = 0) => {
       if (redirects > 5) { reject(new Error('Too many redirects')); return }
       https.get(url, (res: any) => {
-        if (res.statusCode === 301 || res.statusCode === 302) {
+        if (res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 303) {
           download(res.headers.location, redirects + 1)
           return
         }
@@ -165,7 +169,7 @@ async function downloadAndInstallPython311(
         }
         const total = parseInt(res.headers['content-length'] || '0')
         let received = 0
-        const file = createWriteStream(installerPath)
+        const file = createWriteStream(zipPath)
         res.on('data', (chunk: Buffer) => {
           received += chunk.length
           if (total > 0) {
@@ -177,95 +181,72 @@ async function downloadAndInstallPython311(
         file.on('error', reject)
       }).on('error', reject)
     }
-    download(installerUrl)
+    download(zipUrl)
   })
 
   onLog?.('  ✅ Скачивание завершено')
   onProgress?.(0.12)
 
-  // Run installer silently — per-user (no admin)
-  // Full installer always includes Python.h + python311.lib (no Include_dev param needed)
-  onLog?.('  📦 Установка Python 3.11.9...')
-  let installedPyExe: string | null = null
-
-  // Attempt 1: install to TargetDir in app data
+  // Unzip — NuGet package structure: tools/* contains Python
+  // We extract tools/ contents directly into pyDir
+  onLog?.('  📦 Распаковка Python 3.11.9...')
   try {
+    // Use PowerShell to unzip (available on all Windows 10+)
+    // Extract everything to a temp dir, then move tools/ contents
+    const tempDir = join(app.getPath('userData'), 'python-nuget-temp')
+    if (existsSync(tempDir)) {
+      try { rmSync(tempDir, { recursive: true, force: true }) } catch {}
+    }
     execSync(
-      `"${installerPath}" /quiet InstallAllUsers=0 PrependPath=0 Include_pip=1 Include_test=0 InstallLauncherAllUsers=0 TargetDir="${pyDir}"`,
-      { stdio: 'pipe', timeout: 300000, encoding: 'utf-8' }
+      `powershell -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${tempDir}' -Force"`,
+      { stdio: 'pipe', timeout: 120000 }
     )
-    if (existsSync(pyExe)) {
-      installedPyExe = pyExe
-      onLog?.('  ✅ Python установлен в папку приложения')
-    }
-  } catch (err: any) {
-    const stderr = err.stderr?.toString() || ''
-    const exitCode = err.status
-    onLog?.(`  ⚠️ TargetDir install failed (exit=${exitCode}): ${stderr.slice(0, 150)}`)
-  }
-
-  // Attempt 2: install to default per-user location (no TargetDir)
-  if (!installedPyExe) {
-    onLog?.('  📦 Повторная установка (стандартная директория)...')
-    try {
+    // Move tools/* contents into pyDir
+    const toolsDir = join(tempDir, 'tools')
+    if (existsSync(toolsDir)) {
+      // Use robocopy to move contents (more reliable than PowerShell Move-Item for large dirs)
       execSync(
-        `"${installerPath}" /quiet InstallAllUsers=0 PrependPath=0 Include_pip=1 Include_test=0 InstallLauncherAllUsers=0`,
-        { stdio: 'pipe', timeout: 300000, encoding: 'utf-8' }
+        `robocopy "${toolsDir}" "${pyDir}" /E /MOVE /NFL /NDL /NJH /NJS /NC /NS /NP`,
+        { stdio: 'pipe', timeout: 120000 }
       )
-    } catch (err: any) {
-      const stderr = err.stderr?.toString() || ''
-      const exitCode = err.status
-      onLog?.(`  ⚠️ Default install failed (exit=${exitCode}): ${stderr.slice(0, 150)}`)
     }
-
-    // Find python.exe in default per-user location
-    const defaultPath = join(process.env.LOCALAPPDATA || '', 'Programs', 'Python', 'Python311', 'python.exe')
-    if (existsSync(defaultPath)) {
-      installedPyExe = defaultPath
-      onLog?.('  ✅ Python установлен в стандартную директорию')
-      process.env.VOICE_TRANSLATOR_PYTHON = defaultPath
-    }
+    // Clean up temp dir
+    try { rmSync(tempDir, { recursive: true, force: true }) } catch {}
+  } catch (err: any) {
+    onLog?.(`  ❌ Ошибка распаковки: ${err.message.slice(0, 200)}`)
+    throw new Error('Failed to unzip Python')
   }
 
-  // Attempt 3: check if Python 3.11 already exists on system (installer may have skipped)
-  if (!installedPyExe) {
-    for (const cmd of ['py -3.11', 'python3.11', 'python']) {
-      try {
-        const out = execSync(`${cmd} --version 2>&1`, { stdio: 'pipe', timeout: 5000, encoding: 'utf-8' })
-        if (out.includes('Python 3.11')) {
-          // Get actual path
-          const pyPath = execSync(`${cmd} -c "import sys; print(sys.executable)"`, {
-            stdio: 'pipe', timeout: 5000, encoding: 'utf-8'
-          }).trim()
-          if (pyPath && existsSync(pyPath)) {
-            installedPyExe = pyPath
-            onLog?.(`  ✅ Найден существующий Python 3.11: ${pyPath}`)
-            process.env.VOICE_TRANSLATOR_PYTHON = pyPath
-            break
-          }
-        }
-      } catch {}
-    }
-  }
-
-  if (!installedPyExe) {
-    // Clean up installer
-    try { rmSync(installerPath, { force: true }) } catch {}
-    throw new Error('Python.exe not found after installation. Установите Python 3.11 вручную с python.org')
+  // Verify python.exe
+  if (!existsSync(pyExe)) {
+    try {
+      const { readdirSync } = require('fs')
+      const files = readdirSync(pyDir)
+      onLog?.(`  ⚠️ python.exe не найден. Содержимое: ${files.slice(0, 10).join(', ')}`)
+    } catch {}
+    throw new Error('python.exe not found after extraction')
   }
 
   // Verify Python.h exists (needed for TTS C extension compilation)
-  const pyDirActual = require('path').dirname(installedPyExe)
-  const pythonH = join(pyDirActual, 'include', 'Python.h')
-  const pythonHAlt = join(pyDirActual, 'Include', 'Python.h')
-  if (!existsSync(pythonH) && !existsSync(pythonHAlt)) {
+  const pythonH = join(pyDir, 'include', 'Python.h')
+  if (!existsSync(pythonH)) {
     onLog?.('  ⚠️ Python.h не найден — C-расширения могут не компилироваться')
+  } else {
+    onLog?.('  ✅ Python.h найден — C-расширения будут компилироваться')
   }
 
-  // Clean up installer
-  try { rmSync(installerPath, { force: true }) } catch {}
+  // Clean up zip
+  try { rmSync(zipPath, { force: true }) } catch {}
 
-  await installDependencies(installedPyExe, pyDir, onLog, onProgress)
+  // Ensure pip is available
+  try {
+    execSync(`"${pyExe}" -m ensurepip --upgrade`, {
+      stdio: 'pipe', timeout: 60000,
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+    })
+  } catch {}
+
+  await installDependencies(pyExe, pyDir, onLog, onProgress)
 }
 
 /**
