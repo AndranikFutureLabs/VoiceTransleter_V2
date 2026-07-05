@@ -116,8 +116,10 @@ function compareVersions(a: string, b: string): number {
 }
 
 /**
- * Download and install Python 3.11 using embedded (portable) distribution.
- * No admin rights needed — just unzip and configure pip.
+ * Download and install Python 3.11 using the full installer (not embedded).
+ * The full installer includes C headers (Python.h) and libs (python311.lib)
+ * which are REQUIRED for compiling C extensions like Coqui TTS.
+ * No admin rights needed — per-user install (InstallAllUsers=0).
  */
 async function downloadAndInstallPython311(
   onLog?: (msg: string) => void,
@@ -144,11 +146,11 @@ async function downloadAndInstallPython311(
   }
   mkdirSync(pyDir, { recursive: true })
 
-  // Download embedded Python zip (~10 MB)
-  const zipUrl = 'https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip'
-  const zipPath = join(app.getPath('userData'), 'python-3.11.9-embed.zip')
+  // Download full Python installer (~27 MB) — includes headers + libs for C extension compilation
+  const installerUrl = 'https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe'
+  const installerPath = join(app.getPath('userData'), 'python-3.11.9-amd64.exe')
 
-  onLog?.('  📥 Скачивание Python 3.11.9 (embedded, ~10 МБ)...')
+  onLog?.('  📥 Скачивание Python 3.11.9 (полный установщик, ~27 МБ)...')
   onProgress?.(0.02)
 
   await new Promise<void>((resolve, reject) => {
@@ -164,7 +166,7 @@ async function downloadAndInstallPython311(
         }
         const total = parseInt(res.headers['content-length'] || '0')
         let received = 0
-        const file = createWriteStream(zipPath)
+        const file = createWriteStream(installerPath)
         res.on('data', (chunk: Buffer) => {
           received += chunk.length
           if (total > 0) {
@@ -176,74 +178,67 @@ async function downloadAndInstallPython311(
         file.on('error', reject)
       }).on('error', reject)
     }
-    download(zipUrl)
+    download(installerUrl)
   })
 
   onLog?.('  ✅ Скачивание завершено')
   onProgress?.(0.12)
 
-  // Unzip embedded Python
-  onLog?.('  📦 Распаковка Python 3.11.9...')
+  // Run installer silently — per-user (no admin), includes dev files (headers + libs)
+  onLog?.('  📦 Установка Python 3.11.9 (с заголовками и библиотеками C)...')
   try {
-    // Use PowerShell to unzip (available on all Windows 10+)
     execSync(
-      `powershell -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${pyDir}' -Force"`,
-      { stdio: 'pipe', timeout: 60000 }
+      `"${installerPath}" /quiet InstallAllUsers=0 PrependPath=0 ` +
+      `Include_pip=1 Include_dev=1 Include_test=0 Include_doc=0 ` +
+      `Include_launcher=1 TargetDir="${pyDir}"`,
+      { stdio: 'pipe', timeout: 300000 } // 5 minutes
     )
   } catch (err: any) {
-    onLog?.(`  ❌ Ошибка распаковки: ${err.message.slice(0, 200)}`)
-    throw new Error('Failed to unzip Python')
+    onLog?.(`  ❌ Ошибка установки: ${err.message.slice(0, 200)}`)
+    throw new Error('Failed to install Python 3.11.9')
   }
 
-  // Verify python.exe
+  // Verify python.exe exists
   if (!existsSync(pyExe)) {
-    // List what's in the dir for debugging
-    try {
-      const { readdirSync } = require('fs')
-      const files = readdirSync(pyDir)
-      onLog?.(`  ⚠️ python.exe не найден. Содержимое папки: ${files.slice(0, 10).join(', ')}`)
-    } catch {}
-    throw new Error('Python.exe not found after unzip')
+    // TargetDir might not have worked — check default per-user location
+    const defaultPath = join(process.env.LOCALAPPDATA || '', 'Programs', 'Python', 'Python311', 'python.exe')
+    if (existsSync(defaultPath)) {
+      // Python installed to default location — use that path
+      onLog?.('  ℹ️ Python установлен в стандартную директорию')
+      process.env.VOICE_TRANSLATOR_PYTHON = defaultPath
+      // Skip remaining steps that use pyExe — use defaultPath instead
+      const actualPyExe = defaultPath
+      await installDependencies(actualPyExe, pyDir, onLog, onProgress)
+      return
+    }
+    throw new Error('Python.exe not found after installation')
   }
 
-  // Clean up zip
-  try { rmSync(zipPath, { force: true }) } catch {}
-
-  // Enable site-packages (needed for pip)
-  const pthFile = join(pyDir, 'python311._pth')
-  if (existsSync(pthFile)) {
-    let content = readFileSync(pthFile, 'utf-8')
-    // Uncomment "import site" line
-    content = content.replace('#import site', 'import site')
-    writeFileSync(pthFile, content)
+  // Verify Python.h exists (needed for C extension compilation like TTS)
+  const pythonH = join(pyDir, 'include', 'Python.h')
+  if (!existsSync(pythonH)) {
+    // Also check capitalized Include (some installer versions)
+    const pythonHAlt = join(pyDir, 'Include', 'Python.h')
+    if (!existsSync(pythonHAlt)) {
+      onLog?.('  ⚠️ Python.h не найден — C-расширения могут не компилироваться')
+    }
   }
 
-  // Download and install pip via get-pip.py
-  onLog?.('  📦 Установка pip...')
-  const getPipPath = join(pyDir, 'get-pip.py')
-  await new Promise<void>((resolve, reject) => {
-    https.get('https://bootstrap.pypa.io/get-pip.py', (res: any) => {
-      if (res.statusCode !== 200) { reject(new Error(`HTTP ${res.statusCode}`)); return }
-      const file = createWriteStream(getPipPath)
-      res.pipe(file)
-      file.on('finish', () => { file.close(); resolve() })
-      file.on('error', reject)
-    }).on('error', reject)
-  })
+  // Clean up installer
+  try { rmSync(installerPath, { force: true }) } catch {}
 
-  try {
-    execSync(`"${pyExe}" "${getPipPath}" --no-warn-script-location`, {
-      stdio: 'pipe',
-      timeout: 120000,
-      env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
-    })
-  } catch (err: any) {
-    onLog?.(`  ❌ Ошибка установки pip: ${err.message.slice(0, 200)}`)
-    throw new Error('Failed to install pip')
-  }
+  await installDependencies(pyExe, pyDir, onLog, onProgress)
+}
 
-  try { rmSync(getPipPath, { force: true }) } catch {}
-
+/**
+ * Install faster-whisper and TTS dependencies into the given Python.
+ */
+async function installDependencies(
+  pyExe: string,
+  _pyDir: string,
+  onLog?: (msg: string) => void,
+  onProgress?: (pct: number) => void
+): Promise<void> {
   // Install faster-whisper
   onLog?.('  📦 Установка faster-whisper...')
   onProgress?.(0.15)
@@ -258,7 +253,7 @@ async function downloadAndInstallPython311(
     throw new Error('Failed to install faster-whisper')
   }
 
-  // Pre-install TTS build dependencies (numpy, cython, torch needed for TTS build)
+  // Pre-install TTS build dependencies (numpy, cython needed for TTS C extension compilation)
   onLog?.('  📦 Установка зависимостей для TTS...')
   try {
     execSync(`"${pyExe}" -m pip install --no-warn-script-location numpy cython`, {
@@ -268,27 +263,23 @@ async function downloadAndInstallPython311(
     })
   } catch {}
 
-  // Install TTS (Coqui) — this is a large package, may take 10+ minutes
+  // Install TTS (Coqui) — needs C headers (Python.h) + libs (python311.lib) to compile
   onLog?.('  📦 Установка TTS (Coqui, ~5-10 мин)...')
   try {
-    const ttsResult = execSync(
-      `"${pyExe}" -m pip install --no-warn-script-location TTS`,
-      {
-        stdio: 'pipe',
-        timeout: 1800000, // 30 minutes
-        env: { ...process.env, PYTHONIOENCODING: 'utf-8', PIP_DEFAULT_TIMEOUT: '300' },
-        encoding: 'utf-8',
-      }
-    )
+    execSync(`"${pyExe}" -m pip install --no-warn-script-location TTS`, {
+      stdio: 'pipe',
+      timeout: 1800000, // 30 minutes
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8', PIP_DEFAULT_TIMEOUT: '300' },
+      encoding: 'utf-8',
+    })
     onLog?.('  ✅ TTS установлен')
   } catch (err: any) {
-    // Capture stderr for debugging
     const stderr = err.stderr?.toString() || ''
     const stdout = err.stdout?.toString() || ''
     onLog?.(`  ⚠️ stderr: ${stderr.slice(-500)}`)
     onLog?.(`  ⚠️ stdout: ${stdout.slice(-500)}`)
 
-    // Try alternative: install with --no-deps then deps separately
+    // Retry with --no-build-isolation (uses already-installed numpy/cython)
     onLog?.('  🔄 Повторная установка TTS (--no-build-isolation)...')
     try {
       execSync(`"${pyExe}" -m pip install --no-warn-script-location --no-build-isolation TTS`, {
@@ -368,10 +359,13 @@ export async function ensurePythonDeps(
       onLog?.('📦 Python не найден. Автоустановка Python 3.11...')
       try {
         await downloadAndInstallPython311(onLog, onProgress)
-        const { join } = require('path')
-        const { app } = require('electron')
-        const pyExe = join(app.getPath('userData'), 'python311', 'python.exe')
-        process.env.VOICE_TRANSLATOR_PYTHON = pyExe
+        // downloadAndInstallPython311 may set VOICE_TRANSLATOR_PYTHON if TargetDir failed
+        if (!process.env.VOICE_TRANSLATOR_PYTHON) {
+          const { join } = require('path')
+          const { app } = require('electron')
+          const pyExe = join(app.getPath('userData'), 'python311', 'python.exe')
+          process.env.VOICE_TRANSLATOR_PYTHON = pyExe
+        }
         onLog?.('✅ Python 3.11 установлен и готов к работе')
         return
       } catch (err: any) {
@@ -392,11 +386,13 @@ export async function ensurePythonDeps(
       onLog?.(`⚠️ Python ${status.pythonVersion} несовместим. Автоустановка Python 3.11...`)
       try {
         await downloadAndInstallPython311(onLog, onProgress)
-        // Update environment to use embedded Python
-        const { join } = require('path')
-        const { app } = require('electron')
-        const pyExe = join(app.getPath('userData'), 'python311', 'python.exe')
-        process.env.VOICE_TRANSLATOR_PYTHON = pyExe
+        // downloadAndInstallPython311 may set VOICE_TRANSLATOR_PYTHON if TargetDir failed
+        if (!process.env.VOICE_TRANSLATOR_PYTHON) {
+          const { join } = require('path')
+          const { app } = require('electron')
+          const pyExe = join(app.getPath('userData'), 'python311', 'python.exe')
+          process.env.VOICE_TRANSLATOR_PYTHON = pyExe
+        }
         onLog?.('✅ Python 3.11 установлен и готов к работе')
         // Re-check with new Python
         const newStatus = checkPythonDeps()

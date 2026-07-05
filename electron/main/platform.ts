@@ -24,14 +24,14 @@ export function getPythonCommand(): string {
   const envPython = process.env.VOICE_TRANSLATOR_PYTHON
   if (envPython) return envPython
 
-  // Check for embedded Python 3.11 in app data folder
+  // Check for auto-installed Python 3.11 in app data folder (full installer, not embedded)
   try {
     const { join } = require('path')
     const { app } = require('electron')
     const { existsSync } = require('fs')
-    const embeddedPy = join(app.getPath('userData'), 'python311', 'python.exe')
-    if (existsSync(embeddedPy)) {
-      return embeddedPy
+    const localPy = join(app.getPath('userData'), 'python311', 'python.exe')
+    if (existsSync(localPy)) {
+      return localPy
     }
   } catch {}
 
