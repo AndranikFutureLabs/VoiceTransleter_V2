@@ -230,12 +230,11 @@ async function downloadAndInstallPython311(
       `powershell -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${tempDir}' -Force"`,
       { stdio: 'pipe', timeout: 120000 }
     )
-    // Move tools/* contents into pyDir
+    // Move tools/* contents into pyDir using PowerShell (robocopy returns non-zero on success)
     const toolsDir = join(tempDir, 'tools')
     if (existsSync(toolsDir)) {
-      // Use robocopy to move contents (more reliable than PowerShell Move-Item for large dirs)
       execSync(
-        `robocopy "${toolsDir}" "${pyDir}" /E /MOVE /NFL /NDL /NJH /NJS /NC /NS /NP`,
+        `powershell -Command "Get-ChildItem -Path '${toolsDir}' -Force | Move-Item -Destination '${pyDir}' -Force"`,
         { stdio: 'pipe', timeout: 120000 }
       )
     }
