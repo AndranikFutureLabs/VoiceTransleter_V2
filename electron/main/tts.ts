@@ -51,10 +51,14 @@ export async function loadTtsModel(onProgress?: (pct: number) => void, onLog?: (
     const oldPath = process.env.PATH || ''
     const newPath = `${oldPath}`
 
-    pyProcess = spawn(getPythonCommand(), [script], {
+    const pyCmd = getPythonCommand()
+    const pyParts = pyCmd.split(' ')
+    const pyExe = pyParts[0]
+    const pyArgs = [...pyParts.slice(1), script]
+
+    pyProcess = spawn(pyExe, pyArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env, PATH: newPath, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' },
-      shell: true,
     })
 
     let stderrBuf = ''

@@ -78,10 +78,14 @@ export async function loadWhisperModel(
     const script = getScriptPath()
     onLog?.('🔄 Запуск faster-whisper (Python sidecar)...')
 
-    pyProcess = spawn(getPythonCommand(), [script], {
+    const pyCmd = getPythonCommand()
+    const pyParts = pyCmd.split(' ')
+    const pyExe = pyParts[0]
+    const pyArgs = [...pyParts.slice(1), script]
+
+    pyProcess = spawn(pyExe, pyArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' },
-      shell: true,
     })
 
     let stderrBuf = ''
