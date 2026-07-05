@@ -149,40 +149,69 @@ async function downloadAndInstallPython311(
   }
   mkdirSync(pyDir, { recursive: true })
 
-  // Download NuGet Python package (~25 MB) — includes headers + libs + pip
-  const zipUrl = 'https://www.nuget.org/api/v2/package/python/3.11.9'
+  // Download Python 3.11.9 — try multiple sources with retries
+  // NuGet package includes EVERYTHING: python.exe, Python.h, python311.lib, pip
   const zipPath = join(app.getPath('userData'), 'python-3.11.9-nuget.zip')
+  const downloadSources = [
+    'https://www.nuget.org/api/v2/package/python/3.11.9',
+    'https://globalcdn.nuget.org/packages/python.3.11.9.nupkg',
+  ]
 
-  onLog?.('  📥 Скачивание Python 3.11.9 (NuGet, ~25 МБ)...')
+  onLog?.('  📥 Скачивание Python 3.11.9 (~25 МБ)...')
   onProgress?.(0.02)
 
-  await new Promise<void>((resolve, reject) => {
-    const download = (url: string, redirects: number = 0) => {
-      if (redirects > 5) { reject(new Error('Too many redirects')); return }
-      https.get(url, (res: any) => {
-        if (res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 303) {
-          download(res.headers.location, redirects + 1)
-          return
-        }
-        if (res.statusCode !== 200) {
-          reject(new Error(`HTTP ${res.statusCode}`)); return
-        }
-        const total = parseInt(res.headers['content-length'] || '0')
-        let received = 0
-        const file = createWriteStream(zipPath)
-        res.on('data', (chunk: Buffer) => {
-          received += chunk.length
-          if (total > 0) {
-            onProgress?.(0.02 + (received / total) * 0.08)
+  let downloadOk = false
+  let lastErr = ''
+
+  for (let srcIdx = 0; srcIdx < downloadSources.length && !downloadOk; srcIdx++) {
+    const url = downloadSources[srcIdx]
+    for (let attempt = 1; attempt <= 3 && !downloadOk; attempt++) {
+      onLog?.(`  🔄 Скачивание (источник ${srcIdx + 1}, попытка ${attempt}/3)...`)
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const download = (dlUrl: string, redirects: number = 0) => {
+            if (redirects > 5) { reject(new Error('Too many redirects')); return }
+            const req = https.get(dlUrl, (res: any) => {
+              if (res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 303) {
+                download(res.headers.location, redirects + 1)
+                return
+              }
+              if (res.statusCode !== 200) {
+                reject(new Error(`HTTP ${res.statusCode}`)); return
+              }
+              const total = parseInt(res.headers['content-length'] || '0')
+              let received = 0
+              const file = createWriteStream(zipPath)
+              res.on('data', (chunk: Buffer) => {
+                received += chunk.length
+                if (total > 0) {
+                  onProgress?.(0.02 + (received / total) * 0.08)
+                }
+              })
+              res.pipe(file)
+              file.on('finish', () => { file.close(); resolve() })
+              file.on('error', (e: any) => { try { rmSync(zipPath, { force: true }) } catch {}; reject(e) })
+            })
+            req.on('error', (e: any) => { try { rmSync(zipPath, { force: true }) } catch {}; reject(e) })
+            req.setTimeout(120000, () => { req.destroy(); try { rmSync(zipPath, { force: true }) } catch {}; reject(new Error('Download timeout')) })
           }
+          download(url)
         })
-        res.pipe(file)
-        file.on('finish', () => { file.close(); resolve() })
-        file.on('error', reject)
-      }).on('error', reject)
+        downloadOk = true
+      } catch (err: any) {
+        lastErr = err.message
+        onLog?.(`  ⚠️ Ошибка: ${lastErr.slice(0, 100)}`)
+        if (attempt < 3) {
+          onLog?.('  ⏳ Повтор через 3 сек...')
+          await new Promise(r => setTimeout(r, 3000))
+        }
+      }
     }
-    download(zipUrl)
-  })
+  }
+
+  if (!downloadOk) {
+    throw new Error(`Не удалось скачать Python: ${lastErr}`)
+  }
 
   onLog?.('  ✅ Скачивание завершено')
   onProgress?.(0.12)
