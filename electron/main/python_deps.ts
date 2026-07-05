@@ -331,9 +331,10 @@ async function installDependencies(
 
   // Install TTS (Coqui) — needs C headers (Python.h) + libs (python311.lib) to compile
   // --no-cache-dir is critical: torch alone is ~2 GB, cache would fill the disk
+  // Pin transformers<4.44 to avoid BeamSearchScorer removal breaking Coqui TTS
   onLog?.('  📦 Установка TTS (Coqui, ~5-10 мин)...')
   try {
-    execSync(`"${pyExe}" -m pip install --no-warn-script-location --no-cache-dir TTS`, {
+    execSync(`"${pyExe}" -m pip install --no-warn-script-location --no-cache-dir "TTS" "transformers<4.44"`, {
       stdio: 'pipe',
       timeout: 1800000, // 30 minutes
       env: { ...process.env, PYTHONIOENCODING: 'utf-8', PIP_DEFAULT_TIMEOUT: '300' },
@@ -352,7 +353,7 @@ async function installDependencies(
     // Retry with --no-build-isolation (uses already-installed numpy/cython)
     onLog?.('  🔄 Повторная установка TTS (--no-build-isolation)...')
     try {
-      execSync(`"${pyExe}" -m pip install --no-warn-script-location --no-cache-dir --no-build-isolation TTS`, {
+      execSync(`"${pyExe}" -m pip install --no-warn-script-location --no-cache-dir --no-build-isolation "TTS" "transformers<4.44"`, {
         stdio: 'pipe',
         timeout: 1800000,
         env: { ...process.env, PYTHONIOENCODING: 'utf-8', PIP_DEFAULT_TIMEOUT: '300' },
@@ -364,6 +365,15 @@ async function installDependencies(
       throw new Error(`Failed to install TTS: ${stderr2.slice(-300)}`)
     }
   }
+
+  // Ensure transformers is pinned (pip might upgrade it as TTS dependency)
+  onLog?.('  📦 Фиксация transformers<4.44...')
+  try {
+    execSync(`"${pyExe}" -m pip install --no-warn-script-location --no-cache-dir "transformers<4.44"`, {
+      stdio: 'pipe', timeout: 120000,
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+    })
+  } catch {}
 
   // Final cache cleanup
   try { execSync(`"${pyExe}" -m pip cache purge`, { stdio: 'pipe', timeout: 30000 }) } catch {}
