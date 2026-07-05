@@ -274,11 +274,30 @@ async function downloadAndInstallPython311(
     })
   } catch {}
 
+  // Clean up pip cache and temp files to free disk space (TTS + torch need ~4-5 GB)
+  onLog?.('  🧹 Очистка кэша pip и временных файлов...')
+  try {
+    execSync(`"${pyExe}" -m pip cache purge`, { stdio: 'pipe', timeout: 30000 })
+  } catch {}
+  try {
+    const { readdirSync, rmSync } = require('fs')
+    const tempDir = process.env.TEMP || process.env.TMP || ''
+    if (tempDir) {
+      // Clean pip-* temp dirs
+      for (const f of readdirSync(tempDir)) {
+        if (f.startsWith('pip-') || f.startsWith('tmp')) {
+          try { rmSync(join(tempDir, f), { recursive: true, force: true }) } catch {}
+        }
+      }
+    }
+  } catch {}
+
   await installDependencies(pyExe, pyDir, onLog, onProgress)
 }
 
 /**
  * Install faster-whisper and TTS dependencies into the given Python.
+ * Uses --no-cache-dir to avoid filling up disk (TTS + torch = ~4-5 GB).
  */
 async function installDependencies(
   pyExe: string,
@@ -286,11 +305,11 @@ async function installDependencies(
   onLog?: (msg: string) => void,
   onProgress?: (pct: number) => void
 ): Promise<void> {
-  // Install faster-whisper
+  // Install faster-whisper (no cache to save disk)
   onLog?.('  📦 Установка faster-whisper...')
   onProgress?.(0.15)
   try {
-    execSync(`"${pyExe}" -m pip install --no-warn-script-location faster-whisper`, {
+    execSync(`"${pyExe}" -m pip install --no-warn-script-location --no-cache-dir faster-whisper`, {
       stdio: 'pipe',
       timeout: 600000,
       env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
@@ -303,7 +322,7 @@ async function installDependencies(
   // Pre-install TTS build dependencies (numpy, cython needed for TTS C extension compilation)
   onLog?.('  📦 Установка зависимостей для TTS...')
   try {
-    execSync(`"${pyExe}" -m pip install --no-warn-script-location numpy cython`, {
+    execSync(`"${pyExe}" -m pip install --no-warn-script-location --no-cache-dir numpy cython`, {
       stdio: 'pipe',
       timeout: 300000,
       env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
@@ -311,9 +330,10 @@ async function installDependencies(
   } catch {}
 
   // Install TTS (Coqui) — needs C headers (Python.h) + libs (python311.lib) to compile
+  // --no-cache-dir is critical: torch alone is ~2 GB, cache would fill the disk
   onLog?.('  📦 Установка TTS (Coqui, ~5-10 мин)...')
   try {
-    execSync(`"${pyExe}" -m pip install --no-warn-script-location TTS`, {
+    execSync(`"${pyExe}" -m pip install --no-warn-script-location --no-cache-dir TTS`, {
       stdio: 'pipe',
       timeout: 1800000, // 30 minutes
       env: { ...process.env, PYTHONIOENCODING: 'utf-8', PIP_DEFAULT_TIMEOUT: '300' },
@@ -326,10 +346,13 @@ async function installDependencies(
     onLog?.(`  ⚠️ stderr: ${stderr.slice(-500)}`)
     onLog?.(`  ⚠️ stdout: ${stdout.slice(-500)}`)
 
+    // Clean cache before retry
+    try { execSync(`"${pyExe}" -m pip cache purge`, { stdio: 'pipe', timeout: 30000 }) } catch {}
+
     // Retry with --no-build-isolation (uses already-installed numpy/cython)
     onLog?.('  🔄 Повторная установка TTS (--no-build-isolation)...')
     try {
-      execSync(`"${pyExe}" -m pip install --no-warn-script-location --no-build-isolation TTS`, {
+      execSync(`"${pyExe}" -m pip install --no-warn-script-location --no-cache-dir --no-build-isolation TTS`, {
         stdio: 'pipe',
         timeout: 1800000,
         env: { ...process.env, PYTHONIOENCODING: 'utf-8', PIP_DEFAULT_TIMEOUT: '300' },
@@ -341,6 +364,9 @@ async function installDependencies(
       throw new Error(`Failed to install TTS: ${stderr2.slice(-300)}`)
     }
   }
+
+  // Final cache cleanup
+  try { execSync(`"${pyExe}" -m pip cache purge`, { stdio: 'pipe', timeout: 30000 }) } catch {}
 
   onProgress?.(0.2)
   onLog?.('  ✅ Python 3.11.9 + все зависимости установлены!')
