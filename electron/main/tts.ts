@@ -58,7 +58,15 @@ export async function loadTtsModel(onProgress?: (pct: number) => void, onLog?: (
 
     pyProcess = spawn(pyExe, pyArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, PATH: newPath, PYTHONIOENCODING: 'utf-8', PYTHONUNBUFFERED: '1' },
+      env: {
+        ...process.env,
+        PATH: newPath,
+        PYTHONIOENCODING: 'utf-8',
+        PYTHONUNBUFFERED: '1',
+        OMP_NUM_THREADS: '4',
+        MKL_NUM_THREADS: '4',
+        TOKENIZERS_PARALLELISM: 'false',
+      },
     })
 
     let stderrBuf = ''

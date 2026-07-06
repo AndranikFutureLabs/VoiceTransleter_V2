@@ -4,7 +4,13 @@ import numpy as np
 os.environ.setdefault("PYTHONUNBUFFERED", "1")
 os.environ["COQUI_TOS_AGREED"] = "1"
 
+# Prevent torch access violation (0xC0000005) on CPU — limit threads and disable MKL
+os.environ.setdefault("OMP_NUM_THREADS", "4")
+os.environ.setdefault("MKL_NUM_THREADS", "4")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
 import torch
+torch.set_num_threads(4)
 
 original_load = torch.load
 def _patched_load(f, *args, **kwargs):
