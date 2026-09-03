@@ -30,15 +30,19 @@ def transcribe(audio_path: str, language: str, req_id: int = 0):
         return
     try:
         lang = None if language == "auto" else language
-        segments, info = model.transcribe(audio_path, language=lang, beam_size=5)
+        segments, info = model.transcribe(audio_path, language=lang, beam_size=1, vad_filter=True)
         detected = info.language if lang is None else lang
         result = []
+        count = 0
         for seg in segments:
             result.append({
                 "start": round(seg.start, 2),
                 "end": round(seg.end, 2),
                 "text": seg.text.strip(),
             })
+            count += 1
+            if count % 20 == 0:
+                write_msg({"type": "log", "message": f"  ...{count} сегментов, {seg.end:.0f}с / {info.duration:.0f}с", "id": req_id})
         write_msg({
             "type": "result",
             "status": "ok",

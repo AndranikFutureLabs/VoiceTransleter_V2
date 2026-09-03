@@ -173,11 +173,14 @@ export async function runWhisper(audioPath: string, language: string, onLog?: (m
 
   const msg: any = await new Promise((resolve, reject) => {
     const id = ++requestId
-    pending.set(id, { resolve, reject })
+    const timeout = setTimeout(() => {
+      if (pending.has(id)) { pending.delete(id); reject(new Error('Таймаут распознавания (>30 мин)')) }
+    }, 1800000)
+    pending.set(id, {
+      resolve: (val: any) => { clearTimeout(timeout); resolve(val) },
+      reject: (err: Error) => { clearTimeout(timeout); reject(err) },
+    })
     pyProcess!.stdin!.write(JSON.stringify({ type: 'transcribe', id, audio_path: audioPath, language }) + '\n')
-    setTimeout(() => {
-      if (pending.has(id)) { pending.delete(id); reject(new Error('Таймаут распознавания (>10 мин)')) }
-    }, 600000)
   })
 
   onLog?.(`  ✅ Распознано ${msg.segments.length} сегментов, язык: ${msg.detected_language || language || 'en'}`)
