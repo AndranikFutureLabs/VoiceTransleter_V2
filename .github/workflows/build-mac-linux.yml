@@ -48,11 +48,38 @@ jobs:
 
       - name: Install FFmpeg (Linux)
         if: matrix.platform == 'linux'
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+          which ffmpeg ffprobe
 
       - name: Install FFmpeg (macOS)
         if: matrix.platform == 'mac' || matrix.platform == 'mac-arm'
-        run: brew install ffmpeg
+        run: |
+          brew install ffmpeg
+          which ffmpeg ffprobe
+
+      - name: Download FFmpeg binaries to resources (Windows)
+        if: matrix.platform == 'win'
+        shell: bash
+        run: |
+          mkdir -p resources
+          curl -L -o ff.zip https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip
+          7z x ff.zip -o/tmp/ff
+          FF_BIN=$(find /tmp/ff -name 'ffmpeg.exe' | head -1)
+          FP_BIN=$(find /tmp/ff -name 'ffprobe.exe' | head -1)
+          cp "$FF_BIN" resources/ffmpeg.exe
+          cp "$FP_BIN" resources/ffprobe.exe
+          ls -la resources/ffmpeg.exe resources/ffprobe.exe
+
+      - name: Copy FFmpeg binaries to resources (macOS/Linux)
+        if: matrix.platform == 'linux' || matrix.platform == 'mac' || matrix.platform == 'mac-arm'
+        shell: bash
+        run: |
+          mkdir -p resources
+          cp "$(which ffmpeg)" resources/ffmpeg 2>/dev/null || true
+          cp "$(which ffprobe)" resources/ffprobe 2>/dev/null || true
+          chmod +x resources/ffmpeg resources/ffprobe 2>/dev/null || true
+          ls -la resources/ffmpeg resources/ffprobe 2>/dev/null || echo "FFmpeg not found in PATH"
 
       - name: Install Python dependencies
         run: |
