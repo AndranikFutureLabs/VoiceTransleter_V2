@@ -76,7 +76,8 @@ export async function loadWhisperModel(
   return new Promise((resolve, reject) => {
     pendingReady.push({ resolve, reject })
     const script = getScriptPath()
-    onLog?.('🔄 Запуск faster-whisper (Python sidecar)...')
+    const cached = isWhisperCached()
+    onLog?.(cached ? '🔄 Запуск faster-whisper (модель из кэша)...' : '🔄 Загрузка faster-whisper (первая загрузка ~1.5 ГБ)...')
 
     const pyCmd = getPythonCommand()
     const pyParts = pyCmd.split(' ')

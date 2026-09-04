@@ -31,7 +31,13 @@ function getVoicesDir(): string {
 
 export function isTtsReady(): boolean { return isReady }
 export function isTtsDownloading(): boolean { return isDownloading }
-export function isTtsCached(): boolean { return true }
+export function isTtsCached(): boolean {
+  const { existsSync } = require('fs')
+  const { join } = require('path')
+  const localAppData = process.env.LOCALAPPDATA || ''
+  if (!localAppData) return true
+  return existsSync(join(localAppData, 'tts', 'tts_models--multilingual--multi-dataset--xtts_v2', 'model.pth'))
+}
 
 export async function loadTtsModel(onProgress?: (pct: number) => void, onLog?: (msg: string) => void): Promise<void> {
   if (isReady) return
@@ -46,7 +52,8 @@ export async function loadTtsModel(onProgress?: (pct: number) => void, onLog?: (
   return new Promise((resolve, reject) => {
     pendingReady.push({ resolve, reject })
     const script = getScriptPath()
-    onLog?.('🔄 Запуск XTTS v2 (Python, загрузка ~2.5 ГБ, первый раз может быть долго)...')
+    const ttsCached = isTtsCached()
+    onLog?.(ttsCached ? '🔄 Запуск XTTS v2 (модель из кэша)...' : '🔄 Загрузка XTTS v2 (первая загрузка ~2.5 ГБ)...')
 
     const oldPath = process.env.PATH || ''
     const newPath = `${oldPath}`

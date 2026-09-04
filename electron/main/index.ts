@@ -210,9 +210,18 @@ app.whenReady().then(() => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 
-  // auto-load models in background
+  // auto-load models in background (only if not cached)
   setTimeout(async () => {
     if (!getFfmpegPathSafe() || isWhisperReady()) return
+
+    const whisperCached = isWhisperCached()
+    const ttsCached = isTtsCached()
+
+    if (whisperCached && ttsCached) {
+      send('pipeline:log', '✅ Модели в кэше. Нажмите «Загрузить модели» перед запуском.')
+      return
+    }
+
     send('pipeline:log', '🔄 Автозагрузка моделей...')
     send('models:progress', 0.05)
     try {
