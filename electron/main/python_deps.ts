@@ -190,26 +190,73 @@ async function installPythonPackage(
         onLog?.(`  ⚠️ Ошибка сборки: ${stderr.slice(-200)}`)
       }
 
-      // Fallback: install TTS without C extensions (skip monotonic_align build)
+      // Fallback: download TTS source, remove monotonic_align C ext, install from patched source
       if (!ttsInstalled) {
-        onLog?.('  📦 Установка TTS (без сборки C-расширений)...')
+        onLog?.('  📦 Установка TTS из исходников (без monotonic_align)...')
         try {
-          // Set environment to skip C extension builds
-          const envNoBuild = {
-            ...envWithCompiler,
-            PIP_DEFAULT_TIMEOUT: '300',
-            SKIP_BUILD_EXT: '1',
-            CYTHON_SKIP: '1',
-          } as any
-          es(`${py} -m pip install --no-warn-script-location --no-cache-dir --no-build-isolation --no-deps "TTS"`, {
-            stdio: 'pipe', timeout: 1800000, env: envNoBuild,
+          const tempDir = join(app.getPath('userData'), 'tts-src')
+          if (existsSync(tempDir)) { try { rmSync(tempDir, { recursive: true, force: true }) } catch {} }
+          mkdirSync(tempDir, { recursive: true })
+
+          // Download TTS source from GitHub
+          onLog?.('  📦 Скачивание исходников TTS с GitHub...')
+          es(`${py} -m pip download --no-deps --no-binary :all: -d "${tempDir}" "TTS"`, {
+            stdio: 'pipe', timeout: 300000, env: envWithCompiler,
           })
+
+          // Find the downloaded tarball/zip
+          const { readdirSync } = require('fs')
+          let srcArchive = ''
+          for (const f of readdirSync(tempDir)) {
+            if (f.endsWith('.tar.gz') || f.endsWith('.zip') || f.endsWith('.whl')) {
+              srcArchive = join(tempDir, f); break
+            }
+          }
+
+          if (!srcArchive) throw new Error('TTS source archive not found after download')
+
+          // Extract
+          const srcDir = join(tempDir, 'TTS-src')
+          mkdirSync(srcDir, { recursive: true })
+          if (srcArchive.endsWith('.tar.gz')) {
+            es(`powershell -Command "tar -xzf '${srcArchive}' -C '${srcDir}'"`, { stdio: 'pipe', timeout: 120000 })
+          } else {
+            es(`powershell -Command "Expand-Archive -Path '${srcArchive}' -DestinationPath '${srcDir}' -Force"`, { stdio: 'pipe', timeout: 120000 })
+          }
+
+          // Find the setup.py
+          let setupDir = srcDir
+          for (const f of readdirSync(srcDir)) {
+            const sub = join(srcDir, f)
+            try { if (existsSync(join(sub, 'setup.py'))) { setupDir = sub; break } } catch {}
+          }
+
+          // Patch setup.py: remove monotonic_align from ext_modules
+          const setupPath = join(setupDir, 'setup.py')
+          if (existsSync(setupPath)) {
+            let setupContent = require('fs').readFileSync(setupPath, 'utf-8')
+            setupContent = setupContent.replace(/monotonic_align/g, 'monotonic_align_DISABLED')
+            setupContent = setupContent.replace(/ext_modules\s*=\s*\[.*?\]/gs, 'ext_modules=[]')
+            require('fs').writeFileSync(setupPath, setupContent, 'utf-8')
+            onLog?.('  ✅ setup.py пропатчен (monotonic_align убран)')
+          }
+
+          // Install from patched source
+          onLog?.('  📦 Установка TTS из пропатченных исходников...')
+          es(`${py} -m pip install --no-warn-script-location --no-cache-dir --no-build-isolation "${setupDir}"`, {
+            stdio: 'pipe', timeout: 1800000, env: { ...envWithCompiler, PIP_DEFAULT_TIMEOUT: '300' },
+          })
+
           // Install deps separately
-          es(`${py} -m pip install --no-warn-script-location --no-cache-dir "transformers<4.44" torch "faster-whisper"`, {
-            stdio: 'pipe', timeout: 1800000, env: envNoBuild,
+          es(`${py} -m pip install --no-warn-script-location --no-cache-dir "transformers<4.44" torch`, {
+            stdio: 'pipe', timeout: 1800000, env: envWithCompiler,
           })
+
           ttsInstalled = true
-          onLog?.(`  ✅ ${pkgName} установлен (без C-расширений)`)
+          onLog?.(`  ✅ ${pkgName} установлен (без monotonic_align)`)
+
+          // Cleanup
+          try { rmSync(tempDir, { recursive: true, force: true }) } catch {}
         } catch (err2: any) {
           const stderr2 = err2.stderr?.toString() || ''
           onLog?.(`  ❌ Ошибка TTS: ${stderr2.slice(-400)}`)
