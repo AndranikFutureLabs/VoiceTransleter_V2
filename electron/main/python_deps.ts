@@ -45,58 +45,121 @@ function isPipPackageInstalled(pkgName: string): boolean {
  * For TTS, uses the full installation sequence: pre-install numpy/cython,
  * pin transformers<4.44, retry with --no-build-isolation.
  */
-function installPythonPackage(
+async function installPythonPackage(
   pkgName: string,
   onLog?: (msg: string) => void,
   timeout: number = 600000
-): void {
+): Promise<void> {
   const py = getPythonCommand()
   onLog?.(`  📦 Установка ${pkgName}...`)
 
   if (pkgName === 'TTS') {
-    // Upgrade pip, setuptools, wheel first (needed for TTS C extension compilation)
+    // TTS requires a C compiler to build native extensions (cython -> C -> compile)
+    // NuGet Python has Python.h but no cl.exe/gcc.exe — we need to install MinGW-w64
+    const { existsSync, mkdirSync, rmSync, createWriteStream } = require('fs')
+    const { join } = require('path')
+    const https = require('https')
+    const { execSync: es } = require('child_process')
+
+    const mingwDir = join(app.getPath('userData'), 'mingw64')
+    const gccPath = join(mingwDir, 'bin', 'gcc.exe')
+
+    if (!existsSync(gccPath)) {
+      onLog?.('  📦 Установка MinGW-w64 (C-компилятор для TTS)...')
+      try {
+        // Download MinGW-w64 portable
+        const zipPath = join(app.getPath('userData'), 'mingw64.zip')
+        const url = 'https://github.com/niXman/mingw64-binaries/releases/download/13.2.0/mingw64-13.2.0-rt-v11-rev1-x86_64-posix-seh-msvcrt-noexcept.zip'
+        await new Promise<void>((resolve, reject) => {
+          const download = (dlUrl: string, redirects: number = 0) => {
+            if (redirects > 5) { reject(new Error('Too many redirects')); return }
+            const req = https.get(dlUrl, (res: any) => {
+              if (res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 303) {
+                download(res.headers.location, redirects + 1); return
+              }
+              if (res.statusCode !== 200) { reject(new Error(`HTTP ${res.statusCode}`)); return }
+              const file = createWriteStream(zipPath)
+              res.pipe(file)
+              file.on('finish', () => { file.close(); resolve() })
+              file.on('error', (e: any) => { try { rmSync(zipPath, { force: true }) } catch {}; reject(e) })
+            })
+            req.on('error', (e: any) => reject(e))
+            req.setTimeout(120000, () => { req.destroy(); reject(new Error('Download timeout')) })
+          }
+          download(url)
+        })
+
+        // Extract
+        if (existsSync(mingwDir)) { try { rmSync(mingwDir, { recursive: true, force: true }) } catch {} }
+        es(`powershell -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${app.getPath('userData')}' -Force"`, {
+          stdio: 'pipe', timeout: 120000,
+        })
+        try { rmSync(zipPath, { force: true }) } catch {}
+        onLog?.('  ✅ MinGW-w64 установлен')
+      } catch (err: any) {
+        onLog?.(`  ⚠️ Ошибка установки MinGW: ${err.message.slice(0, 150)}`)
+        // Continue anyway — maybe MSVC is available
+      }
+    }
+
+    // Add MinGW to PATH for the pip install
+    const oldPath = process.env.PATH || ''
+    const mingwBin = existsSync(gccPath) ? join(mingwDir, 'bin') : ''
+    const envWithMingw = {
+      ...process.env,
+      PATH: mingwBin ? `${mingwBin};${oldPath}` : oldPath,
+      PYTHONIOENCODING: 'utf-8',
+    }
+
+    // Verify gcc
+    if (mingwBin) {
+      try {
+        const gccVer = es(`"${gccPath}" --version`, { stdio: 'pipe', timeout: 10000, encoding: 'utf-8' })
+        onLog?.(`  ✅ gcc: ${gccVer.split('\\n')[0]}`)
+      } catch {
+        onLog?.('  ⚠️ gcc не запускается — TTS может не собраться')
+      }
+    }
+
+    // Upgrade pip, setuptools, wheel
     onLog?.('  📦 Обновление pip, setuptools, wheel...')
     try {
-      execSync(`${py} -m pip install --upgrade pip setuptools wheel`, {
-        stdio: 'pipe', timeout: 120000,
-        env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+      es(`${py} -m pip install --upgrade pip setuptools wheel`, {
+        stdio: 'pipe', timeout: 120000, env: envWithMingw,
       })
     } catch {}
 
-    // Pre-install numpy + cython (needed for TTS C extension compilation)
+    // Pre-install numpy + cython
     onLog?.('  📦 Предустановка numpy + cython...')
     try {
-      execSync(`${py} -m pip install --no-warn-script-location --no-cache-dir numpy cython`, {
-        stdio: 'pipe', timeout: 300000,
-        env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+      es(`${py} -m pip install --no-warn-script-location --no-cache-dir numpy cython`, {
+        stdio: 'pipe', timeout: 300000, env: envWithMingw,
       })
     } catch {}
 
-    // Install TTS with --no-build-isolation from the start (uses already-installed numpy/cython)
-    // transformers<4.44 pinned (BeamSearchScorer removed in 4.44+)
-    onLog?.('  📦 Установка TTS (--no-build-isolation)...')
+    // Install TTS with --no-build-isolation (uses already-installed numpy/cython)
+    onLog?.('  📦 Установка TTS (--no-build-isolation, C-компилятор: ' + (mingwBin ? 'MinGW' : 'system') + ')...')
     try {
-      execSync(`${py} -m pip install --no-warn-script-location --no-cache-dir --no-build-isolation "TTS" "transformers<4.44"`, {
+      es(`${py} -m pip install --no-warn-script-location --no-cache-dir --no-build-isolation "TTS" "transformers<4.44"`, {
         stdio: 'pipe', timeout: 1800000,
-        env: { ...process.env, PYTHONIOENCODING: 'utf-8', PIP_DEFAULT_TIMEOUT: '300' },
+        env: { ...envWithMingw, PIP_DEFAULT_TIMEOUT: '300' },
       })
       onLog?.(`  ✅ ${pkgName} установлен`)
     } catch (err: any) {
       const stderr = err.stderr?.toString() || ''
-      onLog?.(`  ❌ Ошибка TTS: ${stderr.slice(-300)}`)
+      onLog?.(`  ❌ Ошибка TTS: ${stderr.slice(-400)}`)
       throw new Error(`Failed to install ${pkgName}`)
     }
 
-    // Pin transformers<4.44 (pip might upgrade it as TTS dependency)
+    // Pin transformers<4.44
     try {
-      execSync(`${py} -m pip install --no-warn-script-location --no-cache-dir "transformers<4.44"`, {
-        stdio: 'pipe', timeout: 120000,
-        env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+      es(`${py} -m pip install --no-warn-script-location --no-cache-dir "transformers<4.44"`, {
+        stdio: 'pipe', timeout: 120000, env: envWithMingw,
       })
     } catch {}
 
     // Clean cache
-    try { execSync(`${py} -m pip cache purge`, { stdio: 'pipe', timeout: 30000 }) } catch {}
+    try { es(`${py} -m pip cache purge`, { stdio: 'pipe', timeout: 30000 }) } catch {}
     return
   }
 
@@ -565,7 +628,7 @@ export async function ensurePythonDeps(
   let installed = 0
 
   for (const pkg of missing) {
-    installPythonPackage(pkg, onLog)
+    await installPythonPackage(pkg, onLog)
     installed++
     onProgress?.(0.05 + (installed / total) * 0.15)
   }
