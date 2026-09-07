@@ -54,6 +54,15 @@ function installPythonPackage(
   onLog?.(`  📦 Установка ${pkgName}...`)
 
   if (pkgName === 'TTS') {
+    // Upgrade pip, setuptools, wheel first (needed for TTS C extension compilation)
+    onLog?.('  📦 Обновление pip, setuptools, wheel...')
+    try {
+      execSync(`${py} -m pip install --upgrade pip setuptools wheel`, {
+        stdio: 'pipe', timeout: 120000,
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+      })
+    } catch {}
+
     // Pre-install numpy + cython (needed for TTS C extension compilation)
     onLog?.('  📦 Предустановка numpy + cython...')
     try {
@@ -63,27 +72,19 @@ function installPythonPackage(
       })
     } catch {}
 
-    // Install TTS with transformers<4.44 (BeamSearchScorer removed in 4.44+)
+    // Install TTS with --no-build-isolation from the start (uses already-installed numpy/cython)
+    // transformers<4.44 pinned (BeamSearchScorer removed in 4.44+)
+    onLog?.('  📦 Установка TTS (--no-build-isolation)...')
     try {
-      execSync(`${py} -m pip install --no-warn-script-location --no-cache-dir "TTS" "transformers<4.44"`, {
+      execSync(`${py} -m pip install --no-warn-script-location --no-cache-dir --no-build-isolation "TTS" "transformers<4.44"`, {
         stdio: 'pipe', timeout: 1800000,
         env: { ...process.env, PYTHONIOENCODING: 'utf-8', PIP_DEFAULT_TIMEOUT: '300' },
       })
       onLog?.(`  ✅ ${pkgName} установлен`)
     } catch (err: any) {
-      // Retry with --no-build-isolation (uses already-installed numpy/cython)
-      onLog?.('  🔄 Повторная установка TTS (--no-build-isolation)...')
-      try {
-        execSync(`${py} -m pip install --no-warn-script-location --no-cache-dir --no-build-isolation "TTS" "transformers<4.44"`, {
-          stdio: 'pipe', timeout: 1800000,
-          env: { ...process.env, PYTHONIOENCODING: 'utf-8', PIP_DEFAULT_TIMEOUT: '300' },
-        })
-        onLog?.(`  ✅ ${pkgName} установлен (повтор)`)
-      } catch (err2: any) {
-        const stderr2 = err2.stderr?.toString() || ''
-        onLog?.(`  ❌ Ошибка TTS: ${stderr2.slice(-300)}`)
-        throw new Error(`Failed to install ${pkgName}`)
-      }
+      const stderr = err.stderr?.toString() || ''
+      onLog?.(`  ❌ Ошибка TTS: ${stderr.slice(-300)}`)
+      throw new Error(`Failed to install ${pkgName}`)
     }
 
     // Pin transformers<4.44 (pip might upgrade it as TTS dependency)
