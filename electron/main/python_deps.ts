@@ -42,6 +42,8 @@ function isPipPackageInstalled(pkgName: string): boolean {
 /**
  * Install a Python package via pip.
  * Logs progress to onLog callback.
+ * For TTS, uses the full installation sequence: pre-install numpy/cython,
+ * pin transformers<4.44, retry with --no-build-isolation.
  */
 function installPythonPackage(
   pkgName: string,
@@ -50,6 +52,54 @@ function installPythonPackage(
 ): void {
   const py = getPythonCommand()
   onLog?.(`  📦 Установка ${pkgName}...`)
+
+  if (pkgName === 'TTS') {
+    // Pre-install numpy + cython (needed for TTS C extension compilation)
+    onLog?.('  📦 Предустановка numpy + cython...')
+    try {
+      execSync(`${py} -m pip install --no-warn-script-location --no-cache-dir numpy cython`, {
+        stdio: 'pipe', timeout: 300000,
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+      })
+    } catch {}
+
+    // Install TTS with transformers<4.44 (BeamSearchScorer removed in 4.44+)
+    try {
+      execSync(`${py} -m pip install --no-warn-script-location --no-cache-dir "TTS" "transformers<4.44"`, {
+        stdio: 'pipe', timeout: 1800000,
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8', PIP_DEFAULT_TIMEOUT: '300' },
+      })
+      onLog?.(`  ✅ ${pkgName} установлен`)
+    } catch (err: any) {
+      // Retry with --no-build-isolation (uses already-installed numpy/cython)
+      onLog?.('  🔄 Повторная установка TTS (--no-build-isolation)...')
+      try {
+        execSync(`${py} -m pip install --no-warn-script-location --no-cache-dir --no-build-isolation "TTS" "transformers<4.44"`, {
+          stdio: 'pipe', timeout: 1800000,
+          env: { ...process.env, PYTHONIOENCODING: 'utf-8', PIP_DEFAULT_TIMEOUT: '300' },
+        })
+        onLog?.(`  ✅ ${pkgName} установлен (повтор)`)
+      } catch (err2: any) {
+        const stderr2 = err2.stderr?.toString() || ''
+        onLog?.(`  ❌ Ошибка TTS: ${stderr2.slice(-300)}`)
+        throw new Error(`Failed to install ${pkgName}`)
+      }
+    }
+
+    // Pin transformers<4.44 (pip might upgrade it as TTS dependency)
+    try {
+      execSync(`${py} -m pip install --no-warn-script-location --no-cache-dir "transformers<4.44"`, {
+        stdio: 'pipe', timeout: 120000,
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+      })
+    } catch {}
+
+    // Clean cache
+    try { execSync(`${py} -m pip cache purge`, { stdio: 'pipe', timeout: 30000 }) } catch {}
+    return
+  }
+
+  // Default: simple pip install
   try {
     execSync(`${py} -m pip install --upgrade ${pkgName}`, {
       stdio: 'pipe',
