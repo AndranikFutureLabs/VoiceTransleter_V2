@@ -54,149 +54,180 @@ async function installPythonPackage(
   onLog?.(`  📦 Установка ${pkgName}...`)
 
   if (pkgName === 'TTS') {
-    // TTS requires a C compiler to build native extensions (cython -> C -> compile)
-    // NuGet Python has Python.h but no cl.exe/gcc.exe — we need to install MinGW-w64
-    const { existsSync, mkdirSync, rmSync, createWriteStream } = require('fs')
-    const { join } = require('path')
-    const https = require('https')
-    const { execSync: es } = require('child_process')
+      const { existsSync, mkdirSync, rmSync, createWriteStream, writeFileSync } = require('fs')
+      const { join } = require('path')
+      const https = require('https')
+      const { execSync: es } = require('child_process')
 
-    const mingwDir = join(app.getPath('userData'), 'mingw64')
-    const gccPath = join(mingwDir, 'bin', 'gcc.exe')
-
-    if (!existsSync(gccPath)) {
-      onLog?.('  📦 Установка MinGW-w64 (C-компилятор для TTS, ~260 МБ)...')
+      // TTS requires a C compiler. On Windows, try: MSVC (cl.exe) → MinGW → install Build Tools
+      // Check if MSVC cl.exe is already available
+      let hasMsvc = false
       try {
-        const zipPath = join(app.getPath('userData'), 'mingw64.zip')
-        const url = 'https://github.com/brechtsanders/winlibs_mingw/releases/download/16.1.0posix-14.0.0-msvcrt-r1/winlibs-x86_64-posix-seh-gcc-16.1.0-mingw-w64msvcrt-14.0.0-r1.zip'
-        await new Promise<void>((resolve, reject) => {
-          const download = (dlUrl: string, redirects: number = 0) => {
-            if (redirects > 5) { reject(new Error('Too many redirects')); return }
-            const req = https.get(dlUrl, (res: any) => {
-              if (res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 303) {
-                download(res.headers.location, redirects + 1); return
+        es('cl 2>&1', { stdio: 'pipe', timeout: 5000 })
+        hasMsvc = true
+      } catch {}
+
+      // Check if MinGW gcc is already in PATH
+      let hasGcc = false
+      try {
+        es('gcc --version', { stdio: 'pipe', timeout: 5000 })
+        hasGcc = true
+      } catch {}
+
+      let compiler = hasMsvc ? 'MSVC' : (hasGcc ? 'system-gcc' : '')
+
+      // If no compiler, try installing Visual C++ Build Tools via winget
+      if (!compiler) {
+        onLog?.('  📦 Установка Visual C++ Build Tools (для сборки TTS)...')
+        try {
+          es('winget install --id Microsoft.VisualStudio.2022.BuildTools --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"', {
+            stdio: 'pipe', timeout: 600000,
+            env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+          })
+          // Check again
+          try { es('cl 2>&1', { stdio: 'pipe', timeout: 5000 }); compiler = 'MSVC' } catch {}
+        } catch (err: any) {
+          onLog?.(`  ⚠️ winget не сработал: ${err.message.slice(0, 100)}`)
+        }
+      }
+
+      // If still no compiler, install MinGW-w64 as fallback
+      if (!compiler) {
+        const mingwDir = join(app.getPath('userData'), 'mingw64')
+        const gccPath = join(mingwDir, 'bin', 'gcc.exe')
+
+        if (!existsSync(gccPath)) {
+          onLog?.('  📦 Установка MinGW-w64 (C-компилятор для TTS, ~260 МБ)...')
+          try {
+            const zipPath = join(app.getPath('userData'), 'mingw64.zip')
+            const url = 'https://github.com/brechtsanders/winlibs_mingw/releases/download/16.1.0posix-14.0.0-msvcrt-r1/winlibs-x86_64-posix-seh-gcc-16.1.0-mingw-w64msvcrt-14.0.0-r1.zip'
+            await new Promise<void>((resolve, reject) => {
+              const download = (dlUrl: string, redirects: number = 0) => {
+                if (redirects > 5) { reject(new Error('Too many redirects')); return }
+                const req = https.get(dlUrl, (res: any) => {
+                  if (res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 303) {
+                    download(res.headers.location, redirects + 1); return
+                  }
+                  if (res.statusCode !== 200) { reject(new Error(`HTTP ${res.statusCode}`)); return }
+                  const total = parseInt(res.headers['content-length'] || '0')
+                  let received = 0
+                  let lastPct = 0
+                  const file = createWriteStream(zipPath)
+                  res.on('data', (chunk: Buffer) => {
+                    received += chunk.length
+                    if (total > 0) {
+                      const pct = Math.round(received / total * 100)
+                      if (pct % 10 === 0 && pct > lastPct) { lastPct = pct; onLog?.(`  ⬇️ MinGW: ${pct}%`) }
+                    }
+                  })
+                  res.pipe(file)
+                  file.on('finish', () => { file.close(); resolve() })
+                  file.on('error', (e: any) => { try { rmSync(zipPath, { force: true }) } catch {}; reject(e) })
+                })
+                req.on('error', (e: any) => reject(e))
+                req.setTimeout(300000, () => { req.destroy(); reject(new Error('Download timeout (5 min)')) })
               }
-              if (res.statusCode !== 200) { reject(new Error(`HTTP ${res.statusCode}`)); return }
-              const total = parseInt(res.headers['content-length'] || '0')
-              let received = 0
-              let lastPct = 0
-              const file = createWriteStream(zipPath)
-              res.on('data', (chunk: Buffer) => {
-                received += chunk.length
-                if (total > 0) {
-                  const pct = Math.round(received / total * 100)
-                  if (pct % 10 === 0 && pct > lastPct) { lastPct = pct; onLog?.(`  ⬇️ MinGW: ${pct}%`) }
-                }
-              })
-              res.pipe(file)
-              file.on('finish', () => { file.close(); resolve() })
-              file.on('error', (e: any) => { try { rmSync(zipPath, { force: true }) } catch {}; reject(e) })
+              download(url)
             })
-            req.on('error', (e: any) => reject(e))
-            req.setTimeout(300000, () => { req.destroy(); reject(new Error('Download timeout (5 min)')) })
+
+            if (existsSync(mingwDir)) { try { rmSync(mingwDir, { recursive: true, force: true }) } catch {} }
+            es(`powershell -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${app.getPath('userData')}' -Force"`, {
+              stdio: 'pipe', timeout: 180000,
+            })
+            try { rmSync(zipPath, { force: true }) } catch {}
+            onLog?.('  ✅ MinGW-w64 установлен')
+          } catch (err: any) {
+            onLog?.(`  ⚠️ Ошибка установки MinGW: ${err.message.slice(0, 150)}`)
           }
-          download(url)
-        })
+        }
 
-        // Extract — winlibs zip contains mingw64/ at root
-        if (existsSync(mingwDir)) { try { rmSync(mingwDir, { recursive: true, force: true }) } catch {} }
-        es(`powershell -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${app.getPath('userData')}' -Force"`, {
-          stdio: 'pipe', timeout: 180000,
-        })
-        try { rmSync(zipPath, { force: true }) } catch {}
-        onLog?.('  ✅ MinGW-w64 установлен')
-      } catch (err: any) {
-        onLog?.(`  ⚠️ Ошибка установки MinGW: ${err.message.slice(0, 150)}`)
-        // Continue anyway — maybe MSVC is available
+        if (existsSync(gccPath)) {
+          compiler = 'MinGW'
+          const oldPath = process.env.PATH || ''
+          const mingwBin = join(mingwDir, 'bin')
+          process.env.PATH = `${mingwBin};${oldPath}`
+          process.env.CC = join(mingwBin, 'gcc.exe')
+          process.env.CXX = join(mingwBin, 'g++.exe')
+        }
       }
-    }
 
-    // Add MinGW to PATH for the pip install
-    const oldPath = process.env.PATH || ''
-    const mingwBin = existsSync(gccPath) ? join(mingwDir, 'bin') : ''
-    const envWithMingw = {
-      ...process.env,
-      PATH: mingwBin ? `${mingwBin};${oldPath}` : oldPath,
-      PYTHONIOENCODING: 'utf-8',
-      CC: mingwBin ? join(mingwBin, 'gcc.exe') : undefined,
-      CXX: mingwBin ? join(mingwBin, 'g++.exe') : undefined,
-      DISTUTILS_USE_SDK: '1',
-      PIP_NO_BUILD_ISOLATION: '1',
-    } as any
+      // Prepare environment with compiler
+      const envWithCompiler = {
+        ...process.env,
+        PYTHONIOENCODING: 'utf-8',
+      } as any
 
-    // Configure Python distutils to use MinGW instead of MSVC
-    if (mingwBin) {
+      onLog?.(`  ✅ Компилятор: ${compiler || 'не найден'}`)
+
+      // Upgrade pip, setuptools, wheel
+      onLog?.('  📦 Обновление pip, setuptools, wheel...')
       try {
-        // Write distutils.cfg to force MinGW compiler
-        const pyCmd = getPythonCommand()
-        const pyPrefix = es(`${pyCmd} -c "import sys; print(sys.prefix)"`, {
-          stdio: 'pipe', timeout: 10000, encoding: 'utf-8',
-        }).trim()
-        const libDir = join(pyPrefix, 'Lib', 'distutils')
-        if (!existsSync(libDir)) mkdirSync(libDir, { recursive: true })
-        const distutilsCfg = join(libDir, 'distutils.cfg')
-        const cfgContent = '[build]\ncompiler = mingw32\n\n[build_ext]\ncompiler = mingw32\n'
-        require('fs').writeFileSync(distutilsCfg, cfgContent, 'utf-8')
-        onLog?.('  ✅ distutils.cfg настроен на MinGW')
+        es(`${py} -m pip install --upgrade pip setuptools wheel`, {
+          stdio: 'pipe', timeout: 120000, env: envWithCompiler,
+        })
+      } catch {}
 
-        // Also create a gcc wrapper that Python's distutils can find as 'gcc'
-        // distutils looks for 'gcc' in PATH, which is already set
-      } catch (err: any) {
-        onLog?.(`  ⚠️ Не удалось настроить distutils: ${err.message.slice(0, 100)}`)
-      }
-    }
-
-    // Verify gcc
-    if (mingwBin) {
+      // Pre-install numpy + cython
+      onLog?.('  📦 Предустановка numpy + cython...')
       try {
-        const gccVer = es(`"${gccPath}" --version`, { stdio: 'pipe', timeout: 10000, encoding: 'utf-8' })
-        onLog?.(`  ✅ gcc: ${gccVer.split('\\n')[0]}`)
-      } catch {
-        onLog?.('  ⚠️ gcc не запускается — TTS может не собраться')
+        es(`${py} -m pip install --no-warn-script-location --no-cache-dir numpy cython`, {
+          stdio: 'pipe', timeout: 300000, env: envWithCompiler,
+        })
+      } catch {}
+
+      // Install TTS — try with --no-build-isolation first
+      onLog?.(`  📦 Установка TTS (--no-build-isolation, C-компилятор: ${compiler || 'none'})...`)
+      let ttsInstalled = false
+      try {
+        es(`${py} -m pip install --no-warn-script-location --no-cache-dir --no-build-isolation "TTS" "transformers<4.44"`, {
+          stdio: 'pipe', timeout: 1800000,
+          env: { ...envWithCompiler, PIP_DEFAULT_TIMEOUT: '300' },
+        })
+        ttsInstalled = true
+        onLog?.(`  ✅ ${pkgName} установлен`)
+      } catch (err: any) {
+        const stderr = err.stderr?.toString() || ''
+        onLog?.(`  ⚠️ Ошибка сборки: ${stderr.slice(-200)}`)
       }
+
+      // Fallback: install TTS without C extensions (skip monotonic_align build)
+      if (!ttsInstalled) {
+        onLog?.('  📦 Установка TTS (без сборки C-расширений)...')
+        try {
+          // Set environment to skip C extension builds
+          const envNoBuild = {
+            ...envWithCompiler,
+            PIP_DEFAULT_TIMEOUT: '300',
+            SKIP_BUILD_EXT: '1',
+            CYTHON_SKIP: '1',
+          } as any
+          es(`${py} -m pip install --no-warn-script-location --no-cache-dir --no-build-isolation --no-deps "TTS"`, {
+            stdio: 'pipe', timeout: 1800000, env: envNoBuild,
+          })
+          // Install deps separately
+          es(`${py} -m pip install --no-warn-script-location --no-cache-dir "transformers<4.44" torch "faster-whisper"`, {
+            stdio: 'pipe', timeout: 1800000, env: envNoBuild,
+          })
+          ttsInstalled = true
+          onLog?.(`  ✅ ${pkgName} установлен (без C-расширений)`)
+        } catch (err2: any) {
+          const stderr2 = err2.stderr?.toString() || ''
+          onLog?.(`  ❌ Ошибка TTS: ${stderr2.slice(-400)}`)
+          throw new Error(`Failed to install ${pkgName}`)
+        }
+      }
+
+      // Pin transformers<4.44
+      try {
+        es(`${py} -m pip install --no-warn-script-location --no-cache-dir "transformers<4.44"`, {
+          stdio: 'pipe', timeout: 120000, env: envWithCompiler,
+        })
+      } catch {}
+
+      // Clean cache
+      try { es(`${py} -m pip cache purge`, { stdio: 'pipe', timeout: 30000 }) } catch {}
+      return
     }
-
-    // Upgrade pip, setuptools, wheel
-    onLog?.('  📦 Обновление pip, setuptools, wheel...')
-    try {
-      es(`${py} -m pip install --upgrade pip setuptools wheel`, {
-        stdio: 'pipe', timeout: 120000, env: envWithMingw,
-      })
-    } catch {}
-
-    // Pre-install numpy + cython
-    onLog?.('  📦 Предустановка numpy + cython...')
-    try {
-      es(`${py} -m pip install --no-warn-script-location --no-cache-dir numpy cython`, {
-        stdio: 'pipe', timeout: 300000, env: envWithMingw,
-      })
-    } catch {}
-
-    // Install TTS with --no-build-isolation (uses already-installed numpy/cython)
-    onLog?.('  📦 Установка TTS (--no-build-isolation, C-компилятор: ' + (mingwBin ? 'MinGW' : 'system') + ')...')
-    try {
-      es(`${py} -m pip install --no-warn-script-location --no-cache-dir --no-build-isolation "TTS" "transformers<4.44"`, {
-        stdio: 'pipe', timeout: 1800000,
-        env: { ...envWithMingw, PIP_DEFAULT_TIMEOUT: '300' },
-      })
-      onLog?.(`  ✅ ${pkgName} установлен`)
-    } catch (err: any) {
-      const stderr = err.stderr?.toString() || ''
-      onLog?.(`  ❌ Ошибка TTS: ${stderr.slice(-400)}`)
-      throw new Error(`Failed to install ${pkgName}`)
-    }
-
-    // Pin transformers<4.44
-    try {
-      es(`${py} -m pip install --no-warn-script-location --no-cache-dir "transformers<4.44"`, {
-        stdio: 'pipe', timeout: 120000, env: envWithMingw,
-      })
-    } catch {}
-
-    // Clean cache
-    try { es(`${py} -m pip cache purge`, { stdio: 'pipe', timeout: 30000 }) } catch {}
-    return
-  }
 
   // Default: simple pip install
   try {
