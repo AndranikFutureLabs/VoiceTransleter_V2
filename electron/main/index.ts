@@ -187,6 +187,29 @@ function setupIpc() {
 }
 
 app.whenReady().then(() => {
+  // Clean up old install data on first run of new version
+  try {
+    const userData = app.getPath('userData')
+    const versionFile = join(userData, '.app-version')
+    const currentVersion = app.getVersion()
+    if (existsSync(versionFile)) {
+      const prevVersion = require('fs').readFileSync(versionFile, 'utf-8').trim()
+      if (prevVersion !== currentVersion) {
+        // Version changed — clean old temp files
+        const tempDir = join(userData, 'temp')
+        if (existsSync(tempDir)) {
+          try { require('fs').rmSync(tempDir, { recursive: true, force: true }) } catch {}
+        }
+        // Clean old ffmpeg-bin (will be re-downloaded if needed)
+        const ffmpegDir = join(userData, 'ffmpeg-bin')
+        if (existsSync(ffmpegDir)) {
+          try { require('fs').rmSync(ffmpegDir, { recursive: true, force: true }) } catch {}
+        }
+      }
+    }
+    require('fs').writeFileSync(versionFile, currentVersion, 'utf-8')
+  } catch {}
+
   createWindow()
   setupIpc()
 

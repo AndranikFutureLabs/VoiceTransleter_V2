@@ -25,6 +25,7 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   uninstallDisplayName: "VoiceTransleter V2"
+  deleteAppDataOnUninstall: true
 
 mac:
   target:
