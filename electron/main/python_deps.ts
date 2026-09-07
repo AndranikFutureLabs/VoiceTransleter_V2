@@ -65,11 +65,10 @@ async function installPythonPackage(
     const gccPath = join(mingwDir, 'bin', 'gcc.exe')
 
     if (!existsSync(gccPath)) {
-      onLog?.('  📦 Установка MinGW-w64 (C-компилятор для TTS)...')
+      onLog?.('  📦 Установка MinGW-w64 (C-компилятор для TTS, ~260 МБ)...')
       try {
-        // Download MinGW-w64 portable
         const zipPath = join(app.getPath('userData'), 'mingw64.zip')
-        const url = 'https://github.com/niXman/mingw64-binaries/releases/download/13.2.0/mingw64-13.2.0-rt-v11-rev1-x86_64-posix-seh-msvcrt-noexcept.zip'
+        const url = 'https://github.com/brechtsanders/winlibs_mingw/releases/download/16.1.0posix-14.0.0-msvcrt-r1/winlibs-x86_64-posix-seh-gcc-16.1.0-mingw-w64msvcrt-14.0.0-r1.zip'
         await new Promise<void>((resolve, reject) => {
           const download = (dlUrl: string, redirects: number = 0) => {
             if (redirects > 5) { reject(new Error('Too many redirects')); return }
@@ -78,21 +77,27 @@ async function installPythonPackage(
                 download(res.headers.location, redirects + 1); return
               }
               if (res.statusCode !== 200) { reject(new Error(`HTTP ${res.statusCode}`)); return }
+              const total = parseInt(res.headers['content-length'] || '0')
+              let received = 0
               const file = createWriteStream(zipPath)
+              res.on('data', (chunk: Buffer) => {
+                received += chunk.length
+                if (total > 0) onLog?.(`  ⬇️ MinGW: ${Math.round(received / total * 100)}%`)
+              })
               res.pipe(file)
               file.on('finish', () => { file.close(); resolve() })
               file.on('error', (e: any) => { try { rmSync(zipPath, { force: true }) } catch {}; reject(e) })
             })
             req.on('error', (e: any) => reject(e))
-            req.setTimeout(120000, () => { req.destroy(); reject(new Error('Download timeout')) })
+            req.setTimeout(300000, () => { req.destroy(); reject(new Error('Download timeout (5 min)')) })
           }
           download(url)
         })
 
-        // Extract
+        // Extract — winlibs zip contains mingw64/ at root
         if (existsSync(mingwDir)) { try { rmSync(mingwDir, { recursive: true, force: true }) } catch {} }
         es(`powershell -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${app.getPath('userData')}' -Force"`, {
-          stdio: 'pipe', timeout: 120000,
+          stdio: 'pipe', timeout: 180000,
         })
         try { rmSync(zipPath, { force: true }) } catch {}
         onLog?.('  ✅ MinGW-w64 установлен')
@@ -109,7 +114,9 @@ async function installPythonPackage(
       ...process.env,
       PATH: mingwBin ? `${mingwBin};${oldPath}` : oldPath,
       PYTHONIOENCODING: 'utf-8',
-    }
+      CC: mingwBin ? join(mingwBin, 'gcc.exe') : undefined,
+      CXX: mingwBin ? join(mingwBin, 'g++.exe') : undefined,
+    } as any
 
     // Verify gcc
     if (mingwBin) {
