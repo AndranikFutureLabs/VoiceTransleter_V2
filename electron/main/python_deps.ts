@@ -200,7 +200,7 @@ async function installPythonPackage(
 
           // Download TTS source from GitHub
           onLog?.('  📦 Скачивание исходников TTS с GitHub...')
-          es(`${py} -m pip download --no-deps --no-binary :all: -d "${tempDir}" "TTS"`, {
+          es(`${py} -m pip download --no-deps --no-binary TTS -d "${tempDir}" "TTS"`, {
             stdio: 'pipe', timeout: 300000, env: envWithCompiler,
           })
 
