@@ -54,8 +54,32 @@ function installPythonPackage(
   onLog?.(`  📦 Установка ${pkgName}...`)
 
   if (pkgName === 'TTS') {
-    // Используем coqui-tts[codec] — современный форк с pre-built wheels (без C-компилятора)
-    const pipPkg = 'coqui-tts[codec]'
+    // Используем coqui-tts — современный форк с pre-built wheels
+    // Сначала ставим torch (CPU), потом coqui-tts с зависимостями
+    const pipPkg = 'coqui-tts'
+    
+    // Install torch first (CPU version, ~750 MB)
+    onLog?.('  📦 Установка torch (CPU)...')
+    try {
+      execSync(`${py} -m pip install --no-warn-script-location --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu`, {
+        stdio: 'pipe', timeout: 1800000,
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8', PIP_DEFAULT_TIMEOUT: '300' },
+      })
+      onLog?.('  ✅ torch установлен')
+    } catch (err: any) {
+      onLog?.(`  ⚠️ torch: ${err.message.slice(0, 150)}`)
+      // Try default index as fallback
+      try {
+        execSync(`${py} -m pip install --no-warn-script-location --no-cache-dir torch`, {
+          stdio: 'pipe', timeout: 1800000,
+          env: { ...process.env, PYTHONIOENCODING: 'utf-8', PIP_DEFAULT_TIMEOUT: '300' },
+        })
+        onLog?.('  ✅ torch установлен (default index)')
+      } catch (err2: any) {
+        onLog?.(`  ❌ torch не установлен: ${err2.message.slice(0, 150)}`)
+      }
+    }
+
     onLog?.(`  📦 Установка ${pipPkg}...`)
     try {
       execSync(`${py} -m pip install --no-warn-script-location --no-cache-dir "${pipPkg}"`, {
@@ -82,11 +106,11 @@ function installPythonPackage(
     // Pin transformers (>=5.1 incompatible with coqui-tts)
     onLog?.('  📦 Фиксация версии transformers (совместимость с coqui-tts)...')
     try {
-      execSync(`${py} -m pip install --no-warn-script-location --no-cache-dir "transformers==4.57.6"`, {
+      execSync(`${py} -m pip install --no-warn-script-location --no-cache-dir "transformers>=4.40,<5.0"`, {
         stdio: 'pipe', timeout: 300000,
         env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
       })
-      onLog?.('  ✅ transformers==4.57.6 установлен')
+      onLog?.('  ✅ transformers зафиксирован (<5.0)')
     } catch {}
 
     // Clean cache
@@ -374,10 +398,31 @@ async function installDependencies(
     })
   } catch {}
 
-  // Install TTS engine — coqui-tts (МОДЕРНИЗИРОВАННЫЙ ФОРК, pre-built wheels, без C-компилятора)
-  onLog?.('  📦 Установка coqui-tts[codec]...')
+  // Install torch first (CPU version, ~750 MB)
+  onLog?.('  📦 Установка torch (CPU)...')
   try {
-    execSync(`"${pyExe}" -m pip install --no-warn-script-location --no-cache-dir "coqui-tts[codec]"`, {
+    execSync(`"${pyExe}" -m pip install --no-warn-script-location --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu`, {
+      stdio: 'pipe', timeout: 1800000,
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8', PIP_DEFAULT_TIMEOUT: '300' },
+    })
+    onLog?.('  ✅ torch установлен')
+  } catch (err: any) {
+    onLog?.(`  ⚠️ torch (CPU index): ${err.message.slice(0, 150)}`)
+    try {
+      execSync(`"${pyExe}" -m pip install --no-warn-script-location --no-cache-dir torch`, {
+        stdio: 'pipe', timeout: 1800000,
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8', PIP_DEFAULT_TIMEOUT: '300' },
+      })
+      onLog?.('  ✅ torch установлен (default index)')
+    } catch (err2: any) {
+      onLog?.(`  ❌ torch не установлен: ${err2.message.slice(0, 150)}`)
+    }
+  }
+
+  // Install TTS engine — coqui-tts (МОДЕРНИЗИРОВАННЫЙ ФОРК, pre-built wheels, без C-компилятора)
+  onLog?.('  📦 Установка coqui-tts...')
+  try {
+    execSync(`"${pyExe}" -m pip install --no-warn-script-location --no-cache-dir "coqui-tts"`, {
       stdio: 'pipe',
       timeout: 1800000, // 30 minutes
       env: { ...process.env, PYTHONIOENCODING: 'utf-8', PIP_DEFAULT_TIMEOUT: '300' },
@@ -391,7 +436,7 @@ async function installDependencies(
     // Retry with --no-build-isolation
     onLog?.('  🔄 Повторная установка coqui-tts (--no-build-isolation)...')
     try {
-      execSync(`"${pyExe}" -m pip install --no-warn-script-location --no-cache-dir --no-build-isolation "coqui-tts[codec]"`, {
+      execSync(`"${pyExe}" -m pip install --no-warn-script-location --no-cache-dir --no-build-isolation "coqui-tts"`, {
         stdio: 'pipe',
         timeout: 1800000,
         env: { ...process.env, PYTHONIOENCODING: 'utf-8', PIP_DEFAULT_TIMEOUT: '300' },
@@ -404,14 +449,14 @@ async function installDependencies(
     }
   }
 
-  // Pin transformers (>=5.1 incompatible with coqui-tts)
+  // Pin transformers (>=5.0 incompatible with coqui-tts)
   onLog?.('  📦 Фиксация версии transformers (совместимость с coqui-tts)...')
   try {
-    execSync(`"${pyExe}" -m pip install --no-warn-script-location --no-cache-dir "transformers==4.57.6"`, {
+    execSync(`"${pyExe}" -m pip install --no-warn-script-location --no-cache-dir "transformers>=4.40,<5.0"`, {
       stdio: 'pipe', timeout: 300000,
       env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
     })
-    onLog?.('  ✅ transformers зафиксирован на 4.57.6')
+    onLog?.('  ✅ transformers зафиксирован (<5.0)')
   } catch {}
 
   // Final cache cleanup

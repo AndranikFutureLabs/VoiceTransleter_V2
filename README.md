@@ -55,6 +55,12 @@ VoiceTransleter V2 — десктопное приложение для авто
 - **Многоуровневая установка TTS** — MSVC → winget Build Tools → MinGW → fallback без C-расширений
 - **Fallback `--no-deps`** — если C-компилятор не работает, TTS ставится без сборки (XTTS v2 не требует monotonic_align)
 
+## Что нового в версии 2.2.8
+
+- **Многоуровневая установка TTS** — MSVC → winget Build Tools → MinGW → fallback без C-расширений
+- **Автоматическая установка MinGW-w64** (C-компилятор gcc) для сборки TTS
+- **distutils.cfg** — Python принудительно использует MinGW вместо MSVC
+
 ## Что нового в версии 2.2.7
 
 - **distutils.cfg** — Python принудительно использует MinGW вместо поиска MSVC
