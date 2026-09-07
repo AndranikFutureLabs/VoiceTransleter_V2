@@ -79,10 +79,14 @@ async function installPythonPackage(
               if (res.statusCode !== 200) { reject(new Error(`HTTP ${res.statusCode}`)); return }
               const total = parseInt(res.headers['content-length'] || '0')
               let received = 0
+              let lastPct = 0
               const file = createWriteStream(zipPath)
               res.on('data', (chunk: Buffer) => {
                 received += chunk.length
-                if (total > 0) onLog?.(`  ⬇️ MinGW: ${Math.round(received / total * 100)}%`)
+                if (total > 0) {
+                  const pct = Math.round(received / total * 100)
+                  if (pct % 10 === 0 && pct > lastPct) { lastPct = pct; onLog?.(`  ⬇️ MinGW: ${pct}%`) }
+                }
               })
               res.pipe(file)
               file.on('finish', () => { file.close(); resolve() })
@@ -116,7 +120,31 @@ async function installPythonPackage(
       PYTHONIOENCODING: 'utf-8',
       CC: mingwBin ? join(mingwBin, 'gcc.exe') : undefined,
       CXX: mingwBin ? join(mingwBin, 'g++.exe') : undefined,
+      DISTUTILS_USE_SDK: '1',
+      PIP_NO_BUILD_ISOLATION: '1',
     } as any
+
+    // Configure Python distutils to use MinGW instead of MSVC
+    if (mingwBin) {
+      try {
+        // Write distutils.cfg to force MinGW compiler
+        const pyCmd = getPythonCommand()
+        const pyPrefix = es(`${pyCmd} -c "import sys; print(sys.prefix)"`, {
+          stdio: 'pipe', timeout: 10000, encoding: 'utf-8',
+        }).trim()
+        const libDir = join(pyPrefix, 'Lib', 'distutils')
+        if (!existsSync(libDir)) mkdirSync(libDir, { recursive: true })
+        const distutilsCfg = join(libDir, 'distutils.cfg')
+        const cfgContent = '[build]\ncompiler = mingw32\n\n[build_ext]\ncompiler = mingw32\n'
+        require('fs').writeFileSync(distutilsCfg, cfgContent, 'utf-8')
+        onLog?.('  ✅ distutils.cfg настроен на MinGW')
+
+        // Also create a gcc wrapper that Python's distutils can find as 'gcc'
+        // distutils looks for 'gcc' in PATH, which is already set
+      } catch (err: any) {
+        onLog?.(`  ⚠️ Не удалось настроить distutils: ${err.message.slice(0, 100)}`)
+      }
+    }
 
     // Verify gcc
     if (mingwBin) {
