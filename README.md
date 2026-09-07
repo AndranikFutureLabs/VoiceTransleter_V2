@@ -38,6 +38,12 @@ VoiceTransleter V2 — десктопное приложение для авто
 - **TTS source download fix** — `--no-binary TTS` вместо `:all:` (numpy/torch из wheels, только TTS из исходников)
 - **TTS fallback из исходников** — патч `setup.py`, удаление `monotonic_align`, установка без C-расширений
 
+## Что нового в версии 2.3.0
+
+- **TTS → coqui-tts[codec]** — переход на современный форк с pre-built wheels (не нужен C-компилятор!)
+- **transformers==4.57.6** — фикс совместимости с coqui-tts
+- Убраны MinGW-w64, MSVC, winget Build Tools, patch setup.py — больше не нужны
+
 ## Что нового в версии 2.2.9
 
 - **TTS fallback из исходников** — скачивание исходников, патч `setup.py` (удаление `monotonic_align`), установка без C-расширений
