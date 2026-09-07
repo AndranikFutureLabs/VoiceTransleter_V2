@@ -45,236 +45,54 @@ function isPipPackageInstalled(pkgName: string): boolean {
  * For TTS, uses the full installation sequence: pre-install numpy/cython,
  * pin transformers<4.44, retry with --no-build-isolation.
  */
-async function installPythonPackage(
+function installPythonPackage(
   pkgName: string,
   onLog?: (msg: string) => void,
   timeout: number = 600000
-): Promise<void> {
+): void {
   const py = getPythonCommand()
   onLog?.(`  📦 Установка ${pkgName}...`)
 
   if (pkgName === 'TTS') {
-      const { existsSync, mkdirSync, rmSync, createWriteStream, writeFileSync } = require('fs')
-      const { join } = require('path')
-      const https = require('https')
-      const { execSync: es } = require('child_process')
-
-      // TTS requires a C compiler. On Windows, try: MSVC (cl.exe) → MinGW → install Build Tools
-      // Check if MSVC cl.exe is already available
-      let hasMsvc = false
+    // Используем coqui-tts[codec] — современный форк с pre-built wheels (без C-компилятора)
+    const pipPkg = 'coqui-tts[codec]'
+    onLog?.(`  📦 Установка ${pipPkg}...`)
+    try {
+      execSync(`${py} -m pip install --no-warn-script-location --no-cache-dir "${pipPkg}"`, {
+        stdio: 'pipe', timeout: 1800000,
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8', PIP_DEFAULT_TIMEOUT: '300' },
+      })
+      onLog?.(`  ✅ ${pipPkg} установлен`)
+    } catch (err: any) {
+      // Retry with --no-build-isolation
+      onLog?.('  🔄 Повторная установка (--no-build-isolation)...')
       try {
-        es('cl 2>&1', { stdio: 'pipe', timeout: 5000 })
-        hasMsvc = true
-      } catch {}
-
-      // Check if MinGW gcc is already in PATH
-      let hasGcc = false
-      try {
-        es('gcc --version', { stdio: 'pipe', timeout: 5000 })
-        hasGcc = true
-      } catch {}
-
-      let compiler = hasMsvc ? 'MSVC' : (hasGcc ? 'system-gcc' : '')
-
-      // If no compiler, try installing Visual C++ Build Tools via winget
-      if (!compiler) {
-        onLog?.('  📦 Установка Visual C++ Build Tools (для сборки TTS)...')
-        try {
-          es('winget install --id Microsoft.VisualStudio.2022.BuildTools --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"', {
-            stdio: 'pipe', timeout: 600000,
-            env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
-          })
-          // Check again
-          try { es('cl 2>&1', { stdio: 'pipe', timeout: 5000 }); compiler = 'MSVC' } catch {}
-        } catch (err: any) {
-          onLog?.(`  ⚠️ winget не сработал: ${err.message.slice(0, 100)}`)
-        }
-      }
-
-      // If still no compiler, install MinGW-w64 as fallback
-      if (!compiler) {
-        const mingwDir = join(app.getPath('userData'), 'mingw64')
-        const gccPath = join(mingwDir, 'bin', 'gcc.exe')
-
-        if (!existsSync(gccPath)) {
-          onLog?.('  📦 Установка MinGW-w64 (C-компилятор для TTS, ~260 МБ)...')
-          try {
-            const zipPath = join(app.getPath('userData'), 'mingw64.zip')
-            const url = 'https://github.com/brechtsanders/winlibs_mingw/releases/download/16.1.0posix-14.0.0-msvcrt-r1/winlibs-x86_64-posix-seh-gcc-16.1.0-mingw-w64msvcrt-14.0.0-r1.zip'
-            await new Promise<void>((resolve, reject) => {
-              const download = (dlUrl: string, redirects: number = 0) => {
-                if (redirects > 5) { reject(new Error('Too many redirects')); return }
-                const req = https.get(dlUrl, (res: any) => {
-                  if (res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 303) {
-                    download(res.headers.location, redirects + 1); return
-                  }
-                  if (res.statusCode !== 200) { reject(new Error(`HTTP ${res.statusCode}`)); return }
-                  const total = parseInt(res.headers['content-length'] || '0')
-                  let received = 0
-                  let lastPct = 0
-                  const file = createWriteStream(zipPath)
-                  res.on('data', (chunk: Buffer) => {
-                    received += chunk.length
-                    if (total > 0) {
-                      const pct = Math.round(received / total * 100)
-                      if (pct % 10 === 0 && pct > lastPct) { lastPct = pct; onLog?.(`  ⬇️ MinGW: ${pct}%`) }
-                    }
-                  })
-                  res.pipe(file)
-                  file.on('finish', () => { file.close(); resolve() })
-                  file.on('error', (e: any) => { try { rmSync(zipPath, { force: true }) } catch {}; reject(e) })
-                })
-                req.on('error', (e: any) => reject(e))
-                req.setTimeout(300000, () => { req.destroy(); reject(new Error('Download timeout (5 min)')) })
-              }
-              download(url)
-            })
-
-            if (existsSync(mingwDir)) { try { rmSync(mingwDir, { recursive: true, force: true }) } catch {} }
-            es(`powershell -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${app.getPath('userData')}' -Force"`, {
-              stdio: 'pipe', timeout: 180000,
-            })
-            try { rmSync(zipPath, { force: true }) } catch {}
-            onLog?.('  ✅ MinGW-w64 установлен')
-          } catch (err: any) {
-            onLog?.(`  ⚠️ Ошибка установки MinGW: ${err.message.slice(0, 150)}`)
-          }
-        }
-
-        if (existsSync(gccPath)) {
-          compiler = 'MinGW'
-          const oldPath = process.env.PATH || ''
-          const mingwBin = join(mingwDir, 'bin')
-          process.env.PATH = `${mingwBin};${oldPath}`
-          process.env.CC = join(mingwBin, 'gcc.exe')
-          process.env.CXX = join(mingwBin, 'g++.exe')
-        }
-      }
-
-      // Prepare environment with compiler
-      const envWithCompiler = {
-        ...process.env,
-        PYTHONIOENCODING: 'utf-8',
-      } as any
-
-      onLog?.(`  ✅ Компилятор: ${compiler || 'не найден'}`)
-
-      // Upgrade pip, setuptools, wheel
-      onLog?.('  📦 Обновление pip, setuptools, wheel...')
-      try {
-        es(`${py} -m pip install --upgrade pip setuptools wheel`, {
-          stdio: 'pipe', timeout: 120000, env: envWithCompiler,
-        })
-      } catch {}
-
-      // Pre-install numpy + cython
-      onLog?.('  📦 Предустановка numpy + cython...')
-      try {
-        es(`${py} -m pip install --no-warn-script-location --no-cache-dir numpy cython`, {
-          stdio: 'pipe', timeout: 300000, env: envWithCompiler,
-        })
-      } catch {}
-
-      // Install TTS — try with --no-build-isolation first
-      onLog?.(`  📦 Установка TTS (--no-build-isolation, C-компилятор: ${compiler || 'none'})...`)
-      let ttsInstalled = false
-      try {
-        es(`${py} -m pip install --no-warn-script-location --no-cache-dir --no-build-isolation "TTS" "transformers<4.44"`, {
+        execSync(`${py} -m pip install --no-warn-script-location --no-cache-dir --no-build-isolation "${pipPkg}"`, {
           stdio: 'pipe', timeout: 1800000,
-          env: { ...envWithCompiler, PIP_DEFAULT_TIMEOUT: '300' },
+          env: { ...process.env, PYTHONIOENCODING: 'utf-8', PIP_DEFAULT_TIMEOUT: '300' },
         })
-        ttsInstalled = true
-        onLog?.(`  ✅ ${pkgName} установлен`)
-      } catch (err: any) {
-        const stderr = err.stderr?.toString() || ''
-        onLog?.(`  ⚠️ Ошибка сборки: ${stderr.slice(-200)}`)
+        onLog?.(`  ✅ ${pipPkg} установлен (повтор)`)
+      } catch (err2: any) {
+        const stderr2 = err2.stderr?.toString() || ''
+        onLog?.(`  ❌ Ошибка: ${stderr2.slice(-400)}`)
+        throw new Error(`Failed to install ${pipPkg}`)
       }
-
-      // Fallback: download TTS source, remove monotonic_align C ext, install from patched source
-      if (!ttsInstalled) {
-        onLog?.('  📦 Установка TTS из исходников (без monotonic_align)...')
-        try {
-          const tempDir = join(app.getPath('userData'), 'tts-src')
-          if (existsSync(tempDir)) { try { rmSync(tempDir, { recursive: true, force: true }) } catch {} }
-          mkdirSync(tempDir, { recursive: true })
-
-          // Download TTS source from GitHub
-          onLog?.('  📦 Скачивание исходников TTS с GitHub...')
-          es(`${py} -m pip download --no-deps --no-binary TTS -d "${tempDir}" "TTS"`, {
-            stdio: 'pipe', timeout: 300000, env: envWithCompiler,
-          })
-
-          // Find the downloaded tarball/zip
-          const { readdirSync } = require('fs')
-          let srcArchive = ''
-          for (const f of readdirSync(tempDir)) {
-            if (f.endsWith('.tar.gz') || f.endsWith('.zip') || f.endsWith('.whl')) {
-              srcArchive = join(tempDir, f); break
-            }
-          }
-
-          if (!srcArchive) throw new Error('TTS source archive not found after download')
-
-          // Extract
-          const srcDir = join(tempDir, 'TTS-src')
-          mkdirSync(srcDir, { recursive: true })
-          if (srcArchive.endsWith('.tar.gz')) {
-            es(`powershell -Command "tar -xzf '${srcArchive}' -C '${srcDir}'"`, { stdio: 'pipe', timeout: 120000 })
-          } else {
-            es(`powershell -Command "Expand-Archive -Path '${srcArchive}' -DestinationPath '${srcDir}' -Force"`, { stdio: 'pipe', timeout: 120000 })
-          }
-
-          // Find the setup.py
-          let setupDir = srcDir
-          for (const f of readdirSync(srcDir)) {
-            const sub = join(srcDir, f)
-            try { if (existsSync(join(sub, 'setup.py'))) { setupDir = sub; break } } catch {}
-          }
-
-          // Patch setup.py: remove monotonic_align from ext_modules
-          const setupPath = join(setupDir, 'setup.py')
-          if (existsSync(setupPath)) {
-            let setupContent = require('fs').readFileSync(setupPath, 'utf-8')
-            setupContent = setupContent.replace(/monotonic_align/g, 'monotonic_align_DISABLED')
-            setupContent = setupContent.replace(/ext_modules\s*=\s*\[.*?\]/gs, 'ext_modules=[]')
-            require('fs').writeFileSync(setupPath, setupContent, 'utf-8')
-            onLog?.('  ✅ setup.py пропатчен (monotonic_align убран)')
-          }
-
-          // Install from patched source
-          onLog?.('  📦 Установка TTS из пропатченных исходников...')
-          es(`${py} -m pip install --no-warn-script-location --no-cache-dir --no-build-isolation "${setupDir}"`, {
-            stdio: 'pipe', timeout: 1800000, env: { ...envWithCompiler, PIP_DEFAULT_TIMEOUT: '300' },
-          })
-
-          // Install deps separately
-          es(`${py} -m pip install --no-warn-script-location --no-cache-dir "transformers<4.44" torch`, {
-            stdio: 'pipe', timeout: 1800000, env: envWithCompiler,
-          })
-
-          ttsInstalled = true
-          onLog?.(`  ✅ ${pkgName} установлен (без monotonic_align)`)
-
-          // Cleanup
-          try { rmSync(tempDir, { recursive: true, force: true }) } catch {}
-        } catch (err2: any) {
-          const stderr2 = err2.stderr?.toString() || ''
-          onLog?.(`  ❌ Ошибка TTS: ${stderr2.slice(-400)}`)
-          throw new Error(`Failed to install ${pkgName}`)
-        }
-      }
-
-      // Pin transformers<4.44
-      try {
-        es(`${py} -m pip install --no-warn-script-location --no-cache-dir "transformers<4.44"`, {
-          stdio: 'pipe', timeout: 120000, env: envWithCompiler,
-        })
-      } catch {}
-
-      // Clean cache
-      try { es(`${py} -m pip cache purge`, { stdio: 'pipe', timeout: 30000 }) } catch {}
-      return
     }
+
+    // Pin transformers (>=5.1 incompatible with coqui-tts)
+    onLog?.('  📦 Фиксация версии transformers (совместимость с coqui-tts)...')
+    try {
+      execSync(`${py} -m pip install --no-warn-script-location --no-cache-dir "transformers==4.57.6"`, {
+        stdio: 'pipe', timeout: 300000,
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+      })
+      onLog?.('  ✅ transformers==4.57.6 установлен')
+    } catch {}
+
+    // Clean cache
+    try { execSync(`${py} -m pip cache purge`, { stdio: 'pipe', timeout: 30000 }) } catch {}
+    return
+  }
 
   // Default: simple pip install
   try {
@@ -556,50 +374,44 @@ async function installDependencies(
     })
   } catch {}
 
-  // Install TTS (Coqui) — needs C headers (Python.h) + libs (python311.lib) to compile
-  // --no-cache-dir is critical: torch alone is ~2 GB, cache would fill the disk
-  // Pin transformers<4.44 to avoid BeamSearchScorer removal breaking Coqui TTS
-  onLog?.('  📦 Установка TTS (Coqui, ~5-10 мин)...')
+  // Install TTS engine — coqui-tts (МОДЕРНИЗИРОВАННЫЙ ФОРК, pre-built wheels, без C-компилятора)
+  onLog?.('  📦 Установка coqui-tts[codec]...')
   try {
-    execSync(`"${pyExe}" -m pip install --no-warn-script-location --no-cache-dir "TTS" "transformers<4.44"`, {
+    execSync(`"${pyExe}" -m pip install --no-warn-script-location --no-cache-dir "coqui-tts[codec]"`, {
       stdio: 'pipe',
       timeout: 1800000, // 30 minutes
       env: { ...process.env, PYTHONIOENCODING: 'utf-8', PIP_DEFAULT_TIMEOUT: '300' },
       encoding: 'utf-8',
     })
-    onLog?.('  ✅ TTS установлен')
+    onLog?.('  ✅ coqui-tts установлен')
   } catch (err: any) {
     const stderr = err.stderr?.toString() || ''
-    const stdout = err.stdout?.toString() || ''
     onLog?.(`  ⚠️ stderr: ${stderr.slice(-500)}`)
-    onLog?.(`  ⚠️ stdout: ${stdout.slice(-500)}`)
 
-    // Clean cache before retry
-    try { execSync(`"${pyExe}" -m pip cache purge`, { stdio: 'pipe', timeout: 30000 }) } catch {}
-
-    // Retry with --no-build-isolation (uses already-installed numpy/cython)
-    onLog?.('  🔄 Повторная установка TTS (--no-build-isolation)...')
+    // Retry with --no-build-isolation
+    onLog?.('  🔄 Повторная установка coqui-tts (--no-build-isolation)...')
     try {
-      execSync(`"${pyExe}" -m pip install --no-warn-script-location --no-cache-dir --no-build-isolation "TTS" "transformers<4.44"`, {
+      execSync(`"${pyExe}" -m pip install --no-warn-script-location --no-cache-dir --no-build-isolation "coqui-tts[codec]"`, {
         stdio: 'pipe',
         timeout: 1800000,
         env: { ...process.env, PYTHONIOENCODING: 'utf-8', PIP_DEFAULT_TIMEOUT: '300' },
       })
-      onLog?.('  ✅ TTS установлен (повтор)')
+      onLog?.('  ✅ coqui-tts установлен (повтор)')
     } catch (err2: any) {
       const stderr2 = err2.stderr?.toString() || ''
-      onLog?.(`  ❌ Ошибка TTS: ${stderr2.slice(-500)}`)
-      throw new Error(`Failed to install TTS: ${stderr2.slice(-300)}`)
+      onLog?.(`  ❌ Ошибка coqui-tts: ${stderr2.slice(-500)}`)
+      throw new Error(`Failed to install coqui-tts: ${stderr2.slice(-300)}`)
     }
   }
 
-  // Ensure transformers is pinned (pip might upgrade it as TTS dependency)
-  onLog?.('  📦 Фиксация transformers<4.44...')
+  // Pin transformers (>=5.1 incompatible with coqui-tts)
+  onLog?.('  📦 Фиксация версии transformers (совместимость с coqui-tts)...')
   try {
-    execSync(`"${pyExe}" -m pip install --no-warn-script-location --no-cache-dir "transformers<4.44"`, {
-      stdio: 'pipe', timeout: 120000,
+    execSync(`"${pyExe}" -m pip install --no-warn-script-location --no-cache-dir "transformers==4.57.6"`, {
+      stdio: 'pipe', timeout: 300000,
       env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
     })
+    onLog?.('  ✅ transformers зафиксирован на 4.57.6')
   } catch {}
 
   // Final cache cleanup
@@ -741,7 +553,7 @@ export async function ensurePythonDeps(
   let installed = 0
 
   for (const pkg of missing) {
-    await installPythonPackage(pkg, onLog)
+    installPythonPackage(pkg, onLog)
     installed++
     onProgress?.(0.05 + (installed / total) * 0.15)
   }
